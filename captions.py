@@ -7,7 +7,6 @@ file import/export for real delivery work.
 
 from __future__ import annotations
 
-import os
 import re
 import textwrap
 from pathlib import Path
@@ -39,7 +38,6 @@ def wrap_text(text: str, width: int = 32) -> list[str]:
 
 def _anchor_y(frame, lines, pos: str, pad: int) -> int:
     """Baseline y for the first line of a block at ``pos``."""
-    import cv2
     _h, w = frame.shape[:2]
     line_h = 26
     if pos == "top":
@@ -119,17 +117,17 @@ def draw_timecode(frame, tc):
     """Small monospace-ish timecode in the top-left corner."""
     frame = _as_bgr(frame)
     if frame is None or not tc:
-        return frame_bgr
+        return frame
     try:
         import cv2
     except Exception:
-        return frame_bgr
+        return frame
     try:
         font = cv2.FONT_HERSHEY_PLAIN
         cv2.putText(frame, str(tc), (10, 24), font, 1.4, (0, 0, 0), 4, cv2.LINE_AA)
         cv2.putText(frame, str(tc), (10, 24), font, 1.4, (255, 255, 255), 2, cv2.LINE_AA)
     except Exception:
-        return frame_bgr
+        return frame
     return frame
 
 

@@ -33,7 +33,9 @@ python app.py            # → http://localhost:8550
 **Import** — mp4/mov/webm/avi + png/jpg/webp/bmp, up to 200MB. Browser
 uploads are spilled to disk and probed automatically; big files can be added
 by local path. A one-click **sample generator** produces test media so the
-whole pipeline works with zero assets.**Timelines** — unlimited timeline tabs, duplicate/delete, **duplicate-to-new-tab**, 60-level undo, zoomable clip cards with filmstrip thumbnails, transitions and caption tags.
+whole pipeline works with zero assets.**Timelines** — unlimited timeline tabs, duplicate/delete, **duplicate-to-new-tab**, **nested sequences** (collapse a whole timeline into a single clip on another tab — grades, transitions and fades compose through it), 60-level undo, zoomable clip cards with filmstrip thumbnails, transitions and caption tags.
+
+**Clip motion & speed** — per-clip playback rate (0.5×–4×) and **Ken Burns** pan/zoom presets for stills (zoom in/out, pan left/right), rendered identically in preview and export. Grade copy/paste (`Ctrl+C`/`Ctrl+V`) transfers a whole look between clips.
 
 **Markers** — colored flags with notes, pinned per timeline and saved with the project. Drop with `B`, jump with `↑`/`↓`, click a flag to seek. **Go-to timecode** accepts `90`, `1m30` or `MM:SS`; time display toggles between TC and raw seconds.
 
@@ -80,6 +82,7 @@ Full map lives in `keymap.py` — every binding is remappable at runtime via
 | `B` | Drop marker | `↑` / `↓` | Prev / next marker |
 | `[` / `]` | Cycle fade in / out | `Del` | Remove clip |
 | `G` | Go-to timecode | `P` | Snapshot frame PNG |
+| `Ctrl+C` / `Ctrl+V` | Copy / paste grade | | |
 | `E` | Queue export | `Ctrl+S` | Save |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo | `M` | Mute |
 | `R` | Reset grade | `+` / `-` | Zoom timeline |

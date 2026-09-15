@@ -1,7 +1,6 @@
 import flet as ft
 import os
 import threading
-import logging
 import copy
 import cv2
 
@@ -15,24 +14,26 @@ def _probe_cached(path, **kw):
 
 import video_processor
 import tempfile
-from transitions import list_names as list_transition_names, apply_transition
+from transitions import list_names as list_transition_names
 import themes as themes_mod
 from themes import set_theme, get_theme as get_theme_colors, list_themes
 from effects_rack import list_looks, apply_look
-from timeline_view import clip_card
-from preview_player import PreviewPlayer
 from audio_wave import render_audio_strip
 from thumbnails import cached_filmstrip
-from export import export_timeline, list_presets, get_preset
-from project_store import (save_project, load_project_full, default_save_path,
-                          autosave_path, save_autosave, load_autosave,
-                          validate_media_bin, project_stats)
+from export import list_presets
+from project_store import save_project, load_project_full, default_save_path
 from utils import BG, PANEL, INK, MUTED, ORANGE, VIOLET, MINT, RED, sec_to_tc, safe_name, tc_to_sec
 from filters import apply_fade
 from timeline import Timeline, TimelineSet, Clip, Grade, Marker
 from video_processor import probe_media, grab_media_frame, grade_frame, frame_to_png_bytes
 from histogram import frame_histogram_strip, rgb_parade
 from captions import draw_caption
+
+# live UI palette — starts from utils' neon values, updated by the theme
+# picker so refresh() and dynamically-built controls never go stale
+ui = dict(bg=BG, panel=PANEL, ink=INK, muted=MUTED,
+          accent=ORANGE, secondary=VIOLET, good=MINT, warn=RED,
+          panel_edge="#232136", soft_ink="#cfc9e8", hit_bg="#12251c")
 
 # v2 integrations
 import keymap
@@ -719,7 +720,7 @@ def main(page: ft.Page):
         tabs = []
         for i, t in enumerate(ts.timelines):
             tabs.append(EButton(f"{'▶ ' if i == ts.active else ''}{t.name} ({len(t.clips)})",
-                                bgcolor=VIOLET if i == ts.active else "#2a2740",
+                                bgcolor=VIOLET if i == ts.active else ui["panel_edge"],
                                 color="white",
                                 on_click=lambda e, k=i: switch_timeline(k)))
         tabs.append(ft.IconButton(Icons.ADD, icon_color=MINT, tooltip="Add timeline",
@@ -749,7 +750,7 @@ def main(page: ft.Page):
                                   tooltip="Remove",
                                   on_click=lambda e, k=bi: bin_remove(k)),
                 ], spacing=4, tight=True),
-                bgcolor="#232136", border_radius=8, padding=6))
+                bgcolor=ui["panel_edge"], border_radius=8, padding=6))
         if q and not rows:
             for hit in media_idx.search(q, limit=6):
                 hp = hit.get("path", "")
@@ -763,7 +764,7 @@ def main(page: ft.Page):
                                       tooltip="Add to timeline",
                                       on_click=lambda e, k=hp: refresh(bin_add_path(k))),
                     ], spacing=4, tight=True),
-                    bgcolor="#12251c", border_radius=8, padding=6))
+                    bgcolor=ui["hit_bg"], border_radius=8, padding=6))
         bin_col.controls = rows or [ft.Text("Bin empty — IMPORT MEDIA above", size=11, color=MUTED)]
 
         tl = cur()
@@ -783,13 +784,12 @@ def main(page: ft.Page):
         if clip is None:
             clip = tl.clips[state["sel"]]
             local = 0.0
-        raw, _ = grab_media_frame(clip.path, getattr(clip, "kind", "video"),
-                                  clip.in_point + local)
+        raw, rlocal = _resolve_preview(clip, local)
         if raw is None:
             msg.value = f"could not read {clip.name}"
             page.update()
             return
-        graded = grade_frame(raw, grade, local, clip.trim_dur)
+        graded = grade_frame(raw, grade, rlocal, clip.trim_dur)
         png = frame_to_png_bytes(graded)
         if png:
             preview.src = png
@@ -817,7 +817,7 @@ def main(page: ft.Page):
             cards.append(ft.Container(
                 content=ft.Column([
                     ft.Text(f"{i+1} · {tag} · {c.name[:12]}", size=10, color="white", weight="bold"),
-                    ft.Text(f"{c.trim_dur:.1f}s{tag2}", size=10, color="#cfc9e8"),
+                    ft.Text(f"{c.trim_dur:.1f}s{tag2}", size=10, color=ui["soft_ink"]),
                     *([ft.Row([ft.Image(src=b, width=64, height=36, fit=Fit.CONTAIN)
                                for b in thumbs[:4]], spacing=2, tight=True)] if thumbs else []),
                     *([ft.Text(c.caption[:22], size=9, color=MINT)]
@@ -827,10 +827,10 @@ def main(page: ft.Page):
                     *([ft.Text("⤓ fade out", size=9, color=ORANGE)]
                       if float(getattr(c, "fade_out", 0) or 0) > 0 else []),
                     ft.Row([
-                        ft.IconButton(Icons.CHEVRON_LEFT, icon_size=14, icon_color="#cfc9e8",
+                        ft.IconButton(Icons.CHEVRON_LEFT, icon_size=14, icon_color=ui["soft_ink"],
                                       tooltip="Move left",
                                       on_click=lambda e, k=i: move_clip(k, -1)),
-                        ft.IconButton(Icons.CHEVRON_RIGHT, icon_size=14, icon_color="#cfc9e8",
+                        ft.IconButton(Icons.CHEVRON_RIGHT, icon_size=14, icon_color=ui["soft_ink"],
                                       tooltip="Move right",
                                       on_click=lambda e, k=i: move_clip(k, 1)),
                         ft.IconButton(Icons.CLOSE, icon_size=14, icon_color=ORANGE,
@@ -838,7 +838,7 @@ def main(page: ft.Page):
                                       on_click=lambda e, k=i: delete_clip(k)),
                     ], spacing=0, tight=True),
                 ], spacing=2, tight=True),
-                width=w, bgcolor=VIOLET if active else "#2a2740",
+                width=w, bgcolor=VIOLET if active else ui["panel_edge"],
                 border_radius=10, padding=8,
                 on_click=lambda e, k=i: select_clip(k)))
         clip_row.controls = cards
@@ -856,7 +856,7 @@ def main(page: ft.Page):
                                   tooltip="remove marker",
                                   on_click=lambda e, mk=m: (tl.remove_marker(mk.t), refresh("marker removed"))),
                 ], spacing=0, tight=True),
-                bgcolor="#232136", border_radius=99, padding=ft.padding.only(left=2, right=4)))
+                bgcolor=ui["panel_edge"], border_radius=99, padding=ft.padding.only(left=2, right=4)))
         markers_row.controls = mrow or [ft.Text("no markers — press M to drop one",
                                                 size=10, color=MUTED)]
         try:
@@ -1055,18 +1055,12 @@ def main(page: ft.Page):
         clip, local = tl.locate(state["t"])
         if clip is None:
             return "nothing under the playhead"
-        raw, _ = grab_media_frame(clip.path, getattr(clip, "kind", "video"),
-                                  clip.in_point + local)
+        raw, rlocal = _resolve_preview(clip, local)
         if raw is None:
             return "frame unreadable"
-        graded = grade_frame(raw, grade, local, clip.trim_dur)
-        cap = getattr(clip, "caption", "")
-        if cap:
-            graded = draw_caption(graded, cap, pos=state.get("cap_pos", "bottom"))
-        fi = float(getattr(clip, "fade_in", 0) or 0)
-        fo = float(getattr(clip, "fade_out", 0) or 0)
-        if fi > 0 or fo > 0:
-            graded = apply_fade(graded, fi, fo, local, clip.trim_dur)
+        graded = _finish_preview(clip, raw, rlocal)
+        if graded is None:
+            return "frame unreadable"
         out = os.path.join(tempfile.gettempdir(),
                            f"vidmaker2000_frame_{safe_name(tl.name)}_{int(state['t']*1000)}.png")
         ok, buf = cv2.imencode(".png", graded)
@@ -1101,6 +1095,54 @@ def main(page: ft.Page):
     def _cycle_fade_msg(which):
         v = _cycle_fade(which)
         return "select a clip first" if v is None else f"{which} = {v:.2f}s"
+
+    _SPEED_STEPS = (0.5, 1.0, 2.0, 4.0)
+    _KB_PRESETS = {
+        "zoom in": {"zs": 1.0, "ze": 1.25, "px": 0.0, "py": 0.0},
+        "zoom out": {"zs": 1.25, "ze": 1.0, "px": 0.0, "py": 0.0},
+        "pan right": {"zs": 1.15, "ze": 1.15, "px": -0.12, "py": 0.0},
+        "pan left": {"zs": 1.15, "ze": 1.15, "px": 0.12, "py": 0.0},
+        "off": None,
+    }
+
+    def nest_timeline_action():
+        clip = ts.nest_current()
+        if clip is None:
+            return "nothing to nest"
+        ts.switch(max(0, ts.active - 1)) if ts.active > 0 else None
+        return f"nested -> {clip.name} ({clip.duration:.1f}s)"
+
+    def cycle_clip_speed():
+        tl = cur()
+        if not tl.clips or not (0 <= state["sel"] < len(tl.clips)):
+            return "select a clip first"
+        c = tl.clips[state["sel"]]
+        cur_v = float(getattr(c, "speed", 1.0) or 1.0)
+        i = min(range(len(_SPEED_STEPS)), key=lambda k: abs(_SPEED_STEPS[k] - cur_v))
+        c.speed = _SPEED_STEPS[(i + 1) % len(_SPEED_STEPS)]
+        return f"clip speed {c.speed:g}x"
+
+    def copy_grade():
+        state["grade_clipboard"] = grade.to_dict()
+        return "grade copied"
+
+    def paste_grade():
+        snap = state.get("grade_clipboard")
+        if not snap:
+            return "copy a grade first"
+        grade.__dict__.update(Grade.from_dict(snap).__dict__)
+        sync_grade_ui()
+        return "grade pasted"
+
+    def set_kenburns(name):
+        tl = cur()
+        if not tl.clips or not (0 <= state["sel"] < len(tl.clips)):
+            return "select a clip first"
+        c = tl.clips[state["sel"]]
+        if getattr(c, "kind", "video") != "image":
+            return "Ken Burns needs an image clip"
+        c.kenburns = _KB_PRESETS.get(name)
+        return f"motion: {name}" if c.kenburns else "motion off"
 
     def dup_to_new_timeline():
         src = cur()
@@ -1139,8 +1181,44 @@ def main(page: ft.Page):
         state["zoom"] = max(0.4, min(4.0, state.get("zoom", 1.0) + delta))
         refresh()
 
-    # ---- 30fps playback engine ----
-    player = PreviewPlayer(fps=30.0)
+    # ---- frame resolution: nested clips + Ken Burns aware previews ----
+    def _resolve_preview(clip, local, depth=0):
+        """Return (bgr_frame_or_None, local_t_on_real_clip) for any clip kind."""
+        if depth > 3:
+            return None, local
+        kind = getattr(clip, "kind", "video")
+        if kind == "nested":
+            sub = clip.nested_timeline()
+            if sub is None:
+                return None, local
+            t = float(getattr(clip, "in_point", 0.0) or 0.0) + local
+            sc, s_local = sub.locate(t)
+            if sc is None:
+                return None, local
+            return _resolve_preview(sc, s_local, depth + 1)
+        raw, _ = grab_media_frame(clip.path, kind,
+                                  float(getattr(clip, "in_point", 0.0) or 0.0) + local)
+        return raw, local
+
+    def _finish_preview(clip, raw, local):
+        """Grade + caption + fade + Ken Burns for a resolved preview frame."""
+        if raw is None:
+            return None
+        graded = grade_frame(raw, grade, local, clip.trim_dur)
+        cap = getattr(clip, "caption", "")
+        if cap:
+            graded = draw_caption(graded, cap, pos=state.get("cap_pos", "bottom"))
+        fi = float(getattr(clip, "fade_in", 0) or 0)
+        fo = float(getattr(clip, "fade_out", 0) or 0)
+        if fi > 0 or fo > 0:
+            graded = apply_fade(graded, fi, fo, local, clip.trim_dur)
+        if getattr(clip, "kind", "video") == "image" and getattr(clip, "kenburns", None):
+            from export import _ken_burns
+            t01 = min(1.0, max(0.0, local / max(0.01, clip.trim_dur)))
+            graded = _ken_burns(graded, clip.kenburns, t01)
+        return graded
+
+    # ---- 30fps playback engine (the loop below paces itself at 1/30s) ----
 
     def _paint_frame():
         tl = cur()
@@ -1150,18 +1228,12 @@ def main(page: ft.Page):
         clip, local = tl.locate(state["t"])
         if clip is None:
             return
-        raw, _ = grab_media_frame(clip.path, getattr(clip, "kind", "video"),
-                                  clip.in_point + local)
+        raw, rlocal = _resolve_preview(clip, local)
         if raw is None:
             return
-        graded = grade_frame(raw, grade, local, clip.trim_dur)
-        cap = getattr(clip, "caption", "")
-        if cap:
-            graded = draw_caption(graded, cap, pos=state.get("cap_pos", "bottom"))
-        fi = float(getattr(clip, "fade_in", 0) or 0)
-        fo = float(getattr(clip, "fade_out", 0) or 0)
-        if fi > 0 or fo > 0:
-            graded = apply_fade(graded, fi, fo, local, clip.trim_dur)
+        graded = _finish_preview(clip, raw, rlocal)
+        if graded is None:
+            return
         png = frame_to_png_bytes(graded)
         if png:
             preview.src = png
@@ -1288,6 +1360,10 @@ def main(page: ft.Page):
                 cycle_speed(-1)
             elif k == "shift+l":
                 cycle_speed(1)
+            elif k == "ctrl+c":
+                refresh(copy_grade())
+            elif k == "ctrl+v":
+                refresh(paste_grade())
         except Exception:
             pass
 
@@ -1342,7 +1418,7 @@ def main(page: ft.Page):
 
     def _chip(label, color):
         return ft.Container(content=ft.Text(label, size=10, weight="bold", color=color),
-                            bgcolor="#232136", border_radius=99,
+                            bgcolor=ui["panel_edge"], border_radius=99,
                             padding=ft.padding.symmetric(4, 10))
 
     preset_chip = _chip("720p", VIOLET)
@@ -1376,6 +1452,15 @@ def main(page: ft.Page):
     theme_row = ft.Row(spacing=4, wrap=True)
 
     def _apply_theme_colors(pal):
+        # keep the live palette in sync so everything built after this
+        # (bin rows, cards, chips) picks up the theme automatically
+        light = themes_mod.active_name() in themes_mod.LIGHT_THEMES
+        ui.update(bg=pal["bg"], panel=pal["panel"], ink=pal["ink"],
+                  muted=pal["muted"], accent=pal["accent"],
+                  secondary=pal["secondary"], good=pal["good"], warn=pal["warn"],
+                  panel_edge="#2a2740" if not light else "#d8d8e2",
+                  soft_ink="#cfc9e8" if not light else "#4a4a5e",
+                  hit_bg="#12251c" if not light else "#d9efe2")
         """Recolor the shared chrome that uses module-level constants."""
         try:
             page.bgcolor = pal["bg"]
@@ -1417,7 +1502,7 @@ def main(page: ft.Page):
         content=ft.Column([
             section("THEME"),
             theme_row,
-            ft.Divider(height=1, color="#2a2740"),
+            ft.Divider(height=1, color=ui["panel_edge"]),
             section("MEDIA BIN"),
             EButton("IMPORT MEDIA", bgcolor=ORANGE, color="black",
                     expand=True, action=pick_all),
@@ -1449,7 +1534,7 @@ def main(page: ft.Page):
             bin_search,
             ft.Container(content=bin_col, height=190, bgcolor="#0f0e17",
                          border_radius=8, padding=8),
-            ft.Divider(height=1, color="#2a2740"),
+            ft.Divider(height=1, color=ui["panel_edge"]),
             section("EDIT"),
             ft.Row([
                 EButton("TRIM IN", expand=True, on_click=lambda e: trim(True)),
@@ -1485,12 +1570,28 @@ def main(page: ft.Page):
                               on_click=lambda e: dup_to_new_timeline()),
             ], spacing=2, wrap=True, tight=True),
             ft.Row([
+                ft.TextButton("NEST → UP", tooltip="Collapse this timeline into a nested clip on the previous tab",
+                              on_click=lambda e: refresh(nest_timeline_action())),
+                ft.TextButton("SPEED", tooltip="Cycle per-clip speed (0.5x / 1x / 2x / 4x)",
+                              on_click=lambda e: refresh(cycle_clip_speed())),
+            ], spacing=2, wrap=True, tight=True),
+            ft.Row([
+                ft.TextButton(n, tooltip="Ken Burns motion for the selected image clip",
+                              on_click=lambda e, k=n: refresh(set_kenburns(k)))
+                for n in _KB_PRESETS], spacing=2, wrap=True, tight=True),
+            ft.Row([
+                ft.TextButton("COPY GRADE", tooltip="Copy the current grade (Ctrl+C)",
+                              on_click=lambda e: refresh(copy_grade())),
+                ft.TextButton("PASTE GRADE", tooltip="Apply the copied grade (Ctrl+V)",
+                              on_click=lambda e: refresh(paste_grade())),
+            ], spacing=2, wrap=True, tight=True),
+            ft.Row([
                 ft.TextButton("FADE IN ＋", tooltip="Cycle fade-in on selected clip ([)",
                               on_click=lambda e, w="fade_in": refresh(_cycle_fade_msg(w))),
                 ft.TextButton("FADE OUT ＋", tooltip="Cycle fade-out on selected clip (])",
                               on_click=lambda e, w="fade_out": refresh(_cycle_fade_msg(w))),
             ], spacing=2, wrap=True, tight=True),
-            ft.Divider(height=1, color="#2a2740"),
+            ft.Divider(height=1, color=ui["panel_edge"]),
             section("PROJECT"),
             ft.Text("PRESET", size=11, color=MUTED),
             ft.Row([ft.TextButton(p, tooltip="export preset",
@@ -1502,7 +1603,7 @@ def main(page: ft.Page):
             ], tight=True),
             EButton("EXPORT MP4", bgcolor=MINT, color="black",
                     expand=True, on_click=lambda e: do_export()),
-            ft.Divider(height=1, color="#2a2740"),
+            ft.Divider(height=1, color=ui["panel_edge"]),
             section("SCOPE", color=VIOLET),
             ft.Container(content=hist_img, bgcolor="black", border_radius=8,
                          padding=4, alignment=ft.Alignment.CENTER),

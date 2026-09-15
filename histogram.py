@@ -6,8 +6,6 @@ single entry point that the UI can switch modes through.
 
 from __future__ import annotations
 
-import os
-
 _SCOPE_MODES = ("histogram", "parade", "waveform", "vectorscope")
 
 

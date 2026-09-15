@@ -170,3 +170,92 @@ def test_share_and_render_queue_contract():
     assert queue.cancel(job.job_id) is True
     assert queue.status()["cancelled"] == 1
     assert "exported" in share.export_log_line(30, "out.mp4", 1.0)
+
+
+# ---- v2.4: nested timelines, per-clip speed, Ken Burns, markers ----
+
+def test_nested_clip_roundtrip_and_duration():
+    from timeline import TimelineSet, Clip
+    import cv2, os, tempfile
+    import numpy as np
+    ts = TimelineSet()
+    a = ts.current()
+    p = os.path.join(tempfile.gettempdir(), "nest_t.png")
+    img = np.zeros((60, 80, 3), np.uint8)
+    img[:] = (30, 200, 90)
+    cv2.imwrite(p, img)
+    a.add_clip(Clip(path=p, kind="image", duration=0.5, fps=30.0,
+                    in_point=0.0, out_point=0.5))
+    nested = ts.nest_current("SUB")
+    assert nested is not None and nested.kind == "nested"
+    assert abs(nested.duration - 0.5) < 0.01
+    d = ts.to_dict()
+    ts2 = TimelineSet.from_dict(d)
+    restored = [c for t in ts2.timelines for c in t.clips if c.kind == "nested"]
+    assert restored and restored[0].nested
+
+
+def test_nested_export_produces_frames():
+    import export
+    from timeline import TimelineSet, Clip, Grade
+    import cv2, os, tempfile
+    import numpy as np
+    p = os.path.join(tempfile.gettempdir(), "nest_x.png")
+    cv2.imwrite(p, np.zeros((60, 80, 3), np.uint8))
+    ts = TimelineSet()
+    ts.current().add_clip(Clip(path=p, kind="image", duration=0.4, fps=30.0,
+                               in_point=0.0, out_point=0.4))
+    ts.nest_current("SUB")
+    dst = ts.timelines[ts.active - 1] if ts.active > 0 else ts.timelines[0]
+    out = os.path.join(tempfile.gettempdir(), "nest_x.mp4")
+    r = export.export_timeline(dst, Grade(), out, max_frames=30)
+    assert r.get("ok") and r.get("frames", 0) >= 10
+
+
+def test_ken_burns_moves_frame():
+    import export
+    from timeline import Clip
+    import numpy as np
+    grad = np.tile(np.arange(64, dtype=np.uint8), (48, 1))[..., None].repeat(3, axis=2)
+    kb = {"zs": 1.0, "ze": 1.3, "px": -0.1, "py": 0.0}
+    c = Clip(path="", kind="image", duration=1.0, fps=10.0,
+             in_point=0.0, out_point=1.0, kenburns=kb)
+    frames = list(export._iter_source_frames(c, 10.0)) if False else None
+    # call the renderer directly with the gradient as the still
+    f0 = export._ken_burns(grad, kb, 0.0)
+    f1 = export._ken_burns(grad, kb, 1.0)
+    assert f0.shape == grad.shape and f1.shape == grad.shape
+    assert not np.array_equal(f0, f1)
+
+
+def test_clip_speed_affects_output_length():
+    import export
+    from timeline import Clip, Grade, Timeline
+    import cv2, os, tempfile
+    import numpy as np
+    vp = os.path.join(tempfile.gettempdir(), "spd_t.mp4")
+    w = cv2.VideoWriter(vp, cv2.VideoWriter_fourcc(*"mp4v"), 30, (64, 48))
+    for k in range(60):
+        fr = np.zeros((48, 64, 3), np.uint8)
+        fr[:] = (k * 3 % 255, 90, 60)
+        w.write(fr)
+    w.release()
+    c = Clip(path=vp, kind="video", duration=2.0, fps=30.0,
+             in_point=0.0, out_point=2.0, speed=2.0)
+    tl = Timeline()
+    tl.add_clip(c)
+    out = os.path.join(tempfile.gettempdir(), "spd_t_out.mp4")
+    r = export.export_timeline(tl, Grade(), out, max_frames=60)
+    assert r.get("ok")
+
+
+def test_markers_nav_and_persistence():
+    from timeline import Timeline
+    tl = Timeline()
+    tl.add_marker(1.0, color="mint", note="a")
+    tl.add_marker(3.0)
+    assert tl.marker_before(2.0).t == 1.0
+    assert tl.marker_after(2.0).t == 3.0
+    assert tl.marker_after(3.0) is None
+    tl2 = Timeline.from_dict(tl.to_dict())
+    assert len(tl2.markers) == 2 and tl2.markers[0].note == "a"

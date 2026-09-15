@@ -1,6 +1,6 @@
 import cv2
 import os
-from video_processor import grade_frame, render_frame
+from video_processor import render_frame
 from filters import apply_fade
 from profiles import PROFILES as _PROFILES, crop_box
 
@@ -28,15 +28,67 @@ def list_presets():
     return sorted(EXPORT_PRESETS.keys())
 
 
-def _iter_source_frames(clip, fps):
+def _ken_burns(frame, kb, t01):
+    """Apply Ken Burns pan/zoom to a still frame at progress t01 (0..1)."""
+    if frame is None or not kb:
+        return frame
+    t = max(0.0, min(1.0, float(t01)))
+    h, w = frame.shape[:2]
+    zs = float(kb.get("zs", 1.0)); ze = float(kb.get("ze", 1.15))
+    px = float(kb.get("px", 0.0)); py = float(kb.get("py", 0.0))
+    z = zs + (ze - zs) * t
+    z = max(1.0, min(4.0, z))
+    # pan target in source pixels, eased
+    tx = px * w * t
+    ty = py * h * t
+    # crop window at zoom z centred on pan target
+    cw, ch = w / z, h / z
+    cx = max(cw / 2, min(w - cw / 2, w / 2 + tx))
+    cy = max(ch / 2, min(h - ch / 2, h / 2 + ty))
+    x0 = int(max(0, cx - cw / 2)); y0 = int(max(0, cy - ch / 2))
+    x1 = int(min(w, x0 + cw)); y1 = int(min(h, y0 + ch))
+    crop = frame[y0:y1, x0:x1]
+    if crop.size == 0:
+        return frame
+    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def _iter_source_frames(clip, fps, depth=0):
     kind = getattr(clip, "kind", "video") or "video"
     dur = float(getattr(clip, "trim_dur", 0) or 0)
     if dur <= 0:
         dur = float(getattr(clip, "duration", 0) or 0)
+    spd = max(0.25, min(4.0, float(getattr(clip, "speed", 1.0) or 1.0)))
+    kb = getattr(clip, "kenburns", None)
     n_out = max(1, int(dur * fps))
+    if kind == "nested":
+        # a nested clip plays its sub-timeline; in_point/out_point trim it.
+        # depth guard stops pathological self-nesting at render time.
+        sub = getattr(clip, "nested_timeline", lambda: None)()
+        if sub is None or depth > 3:
+            return
+        skip = int(round(float(getattr(clip, "in_point", 0.0) or 0.0) * fps))
+        produced = 0
+
+        def _walk(tl, d):
+            for sc in tl.clips:
+                yield from _iter_source_frames(sc, fps, d)
+
+        for idx, fr in enumerate(_walk(sub, depth + 1)):
+            if idx < skip:
+                continue
+            if produced >= n_out:
+                break
+            yield fr
+            produced += 1
+        return
     if kind == "image":
         still = cv2.imread(clip.path, cv2.IMREAD_COLOR)
         if still is None:
+            return
+        if kb:
+            for i in range(n_out):
+                yield _ken_burns(still, kb, i / max(1, n_out - 1))
             return
         for _ in range(n_out):
             yield still
@@ -47,27 +99,43 @@ def _iter_source_frames(clip, fps):
     cfps = float(getattr(clip, "fps", 0) or fps) or fps
     start = int(clip.in_point * cfps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+    step = max(1, int(round(spd)))          # per-clip speed: skip source frames
     last_frame = None
-    for _ in range(n_out):
+    i = 0
+    while i < n_out:
         ok, frame = cap.read()
         if not ok:
             if last_frame is not None:
                 yield last_frame
+            i += 1
             continue
-        last_frame = frame
-        yield frame
+        if (i // max(1, int(round(1.0)))) % 1 == 0 and i % step == 0:
+            last_frame = frame
+            yield frame
+        elif last_frame is not None:
+            yield last_frame
+        i += 1
     cap.release()
 
 
 def export_timeline(timeline, grade, out_path, progress_cb=None,
                     max_frames=1800, preset=None, cancel_flag=None):
-    clips = [c for c in timeline.clips if getattr(c, "path", "") and os.path.exists(c.path)]
+    clips = [c for c in timeline.clips
+             if (getattr(c, "path", "") and os.path.exists(c.path))
+             or getattr(c, "kind", "") == "nested"]
     if not clips:
         return {"ok": False, "error": "no clips"}
     w = h = 0
     fps = 30.0
     for c in clips:
         kind = getattr(c, "kind", "video") or "video"
+        if kind == "nested":
+            # placeholder frame size; nested geometry comes from the sub-clip
+            w = w or 1280
+            h = h or 720
+            if w > 0 and h > 0 and len(clips) == 1:
+                break
+            continue
         if kind == "image":
             still = cv2.imread(c.path, cv2.IMREAD_COLOR)
             if still is not None:
@@ -106,7 +174,6 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
         dur = float(getattr(clip, "trim_dur", 0) or 0)
         if dur <= 0:
             dur = float(getattr(clip, "duration", 0) or 0)
-        n_out = max(1, int(dur * fps))
         trans = getattr(clip, "transition", "cut") or "cut"
         trans_dur = float(getattr(clip, "trans_dur", 0.5) or 0.5)
         caption = str(getattr(clip, "caption", "") or "")

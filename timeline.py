@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 import copy
 
 
@@ -69,11 +69,26 @@ class Clip:
     in_point: float = 0.0
     out_point: float = 0.0
     order: int = 0
+    # nested-sequence support: when kind == "nested", ``path`` stores the
+    # serialized sub-timeline JSON and duration/trim fields work as usual
+    nested: dict | None = None
+    # per-clip playback rate (2.0 = twice as fast; timeline duration is kept
+    # by advancing through source frames ``speed``x faster)
+    speed: float = 1.0
+    # Ken Burns motion for stills: {"zs": 1.0, "ze": 1.15, "px": -0.1, "py": 0.05}
+    # zoom start/end factors and pan as fractions of frame size
+    kenburns: dict | None = None
 
     @property
     def trim_dur(self):
         out = self.out_point if self.out_point > 0 else self.duration
         return max(0.1, out - self.in_point)
+
+    def nested_timeline(self):
+        """Materialized sub-Timeline for nested clips (None otherwise)."""
+        if self.kind != "nested" or not self.nested:
+            return None
+        return Timeline.from_dict(self.nested)
 
     def to_dict(self):
         return asdict(self)
@@ -273,6 +288,29 @@ class TimelineSet:
         if 0 <= idx < len(self.timelines):
             self.active = idx
         return self.current()
+
+    def nest_current(self, name=None) -> Clip | None:
+        """Serialize the current timeline into a nested clip appended to the
+        previous timeline (or a fresh one). Guarded against self-nesting."""
+        src = self.current()
+        if not src.clips:
+            return None
+        payload = src.to_dict()
+        # choose the destination: the timeline before the source, if any
+        if self.active > 0:
+            dst = self.timelines[self.active - 1]
+        else:
+            dst = Timeline(name=f"Comp {src.name}"[:28])
+            self.timelines.append(dst)
+            self.active = len(self.timelines) - 1
+            dst = self.timelines[self.active]
+        clip = Clip(kind="nested", name=name or f"⟳ {src.name}",
+                    duration=src.total_duration(), fps=30.0,
+                    in_point=0.0, out_point=src.total_duration(),
+                    order=len(dst.clips), nested=payload)
+        clip.path = ""
+        dst.add_clip(clip)
+        return clip
 
     def to_dict(self):
         return {"active": self.active, "timelines": [t.to_dict() for t in self.timelines]}

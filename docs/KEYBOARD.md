@@ -27,6 +27,7 @@ sheet that matches the running code.
 | `[` / `]` | Cycle fade-in / fade-out on the selected clip |
 | `ctrl+z` / `ctrl+y` | Undo / redo |
 | `ctrl+s` | Save the project (writes an autosave snapshot too) |
+| `ctrl+c` / `ctrl+v` | Copy / paste the whole grade between clips |
 
 ## Markers
 

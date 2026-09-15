@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.4 — nested timelines, motion and speed
+
+- nested sequences: collapse an entire timeline into a single clip on another
+  tab (NEST button); renders recursively in export and preview, persists in
+  projects, guarded against self-nesting
+- per-clip playback speed 0.5x-4x (SPEED button) — export advances source
+  frames faster/slower, preview resolves accordingly
+- Ken Burns motion for stills: zoom in/out, pan left/right presets, applied
+  in both preview and export
+- grade copy/paste (Ctrl+C / Ctrl+V) transfers the whole look between clips
+- theme-aware dynamic UI: bin rows, cards, chips, markers and dividers now
+  recolor under every theme (daylight light mode fully supported)
+- fixes: undefined frame_bgr in captions.draw_timecode, dead imports across
+  10 modules, broken Procfile reference kept fixed, pyflakes-clean codebase
+- tests grew to 22 (nested roundtrip + export, Ken Burns motion, clip speed,
+  marker persistence), contract updated for new APIs
+
+# Changelog
+
 ## v2.3 — markers, fades and craft tools
 
 - timeline markers: colored flags with notes, B to drop, Up/Down to jump,

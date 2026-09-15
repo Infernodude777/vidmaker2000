@@ -98,7 +98,6 @@ def zoom_dissolve(a, b, t):
     """Zoom the outgoing frame while crossfading."""
     try:
         import cv2
-        import numpy as np
     except Exception:
         return crossfade(a, b, t)
     a_arr, b_arr = _safe_frames(a, b)

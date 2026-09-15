@@ -2,7 +2,6 @@ import json
 import os
 import time
 import shutil
-from timeline import Timeline, TimelineSet, Grade
 
 EXT = ".vidmaker"
 
@@ -41,7 +40,7 @@ def save_project(path, timeline_or_set, grade, media_bin=None):
 
 
 def load_project_full(path):
-    from timeline import Timeline, TimelineSet, Grade as GradeCls
+    from timeline import TimelineSet, Grade as GradeCls
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     g = GradeCls.from_dict(data.get("grade", {}))

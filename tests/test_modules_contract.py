@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 EXPECTED = {
     "utils": ["sec_to_tc", "tc_to_sec", "safe_name", "clamp", "ease_inout"],
-    "timeline": ["Grade", "Clip", "Timeline", "TimelineSet"],
+    "timeline": ["Grade", "Clip", "Timeline", "TimelineSet", "Marker"],
     "timeline_ops": ["ripple_delete", "insert_at", "close_gaps", "nudge", "merge_adjacent", "stats"],
     "captions": ["draw_caption", "draw_title", "draw_timecode", "CaptionTrack",
                  "parse_subtitles", "wrap_text"],
@@ -34,6 +34,7 @@ EXPECTED = {
     "scene_detect": ["scene_changes", "auto_split_points"],
     "beat_detect": ["detect_beats", "beat_markers", "read_wav_mono"],
     "lut": ["build_table", "preset_table", "apply_table", "list_presets"],
+    "export": ["export_timeline", "get_preset", "list_presets"],
     "profiles": ["list_profiles", "get_profile", "summary", "crop_box"],
     "broll": ["index_folder", "suggest", "pick_shot"],
     "media_index": ["MediaIndex"],
