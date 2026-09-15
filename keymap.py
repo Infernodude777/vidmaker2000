@@ -21,6 +21,8 @@ DEFAULTS = {
     "step_fwd": "right",
     "jump_back": "j",
     "jump_fwd": "l",
+    "pause": "k",
+    "save": "ctrl+s",
     "undo": "ctrl+z",
     "redo": "ctrl+y",
     "zoom_in": "+",

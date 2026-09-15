@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.2 — polish, branding and hosting
+
+- favicon set rendered from a new gradient play-mark: `favicon.svg`,
+  `favicon.ico` (16→256), `favicon-256.png`, `apple-touch-icon.png`
+- hosted mode: a FastAPI front serves brand assets and mounts the Flet app
+  (PORT-aware); Procfile fixed — it referenced a nonexistent `app:app`
+- header: logo mark, two-tone VIDMAKER2000 title, live version/preset/
+  play-state chips, gradient background
+- boot splash rebuilt around the brand mark with a feature list
+- keyboard: `K` pause and `Ctrl+S` save added; shortcuts no longer hijack
+  typing while a text field is focused
+- `keymap`, `shortcuts` registry and `docs/KEYBOARD.md` kept in sync
+  (19 bindings, conflict-checked)
+- README rewritten: badges, feature deep-dives, testing and deploy sections
+
+# Changelog
+
 ## v2.1 — integration release (hand-applied)
 
 - app.py: all 11 v2 modules wired in — keymap-driven shortcuts, autosave

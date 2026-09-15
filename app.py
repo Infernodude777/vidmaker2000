@@ -78,6 +78,70 @@ def _run_flet(main_fn, port=8550):
         raise RuntimeError("no flet runner found")
 
 
+# ---- branding assets served at the server level ----------------------------
+# Flet 1.0 has no favicon hook, so the UI is wrapped in a tiny FastAPI app
+# that serves /favicon.ico, /favicon.svg and /apple-touch-icon.png. The same
+# paths also work via Flet's static assets dir when running desktop.
+_BRAND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+_BRAND_FILES = {
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/favicon-256.png": ("favicon-256.png", "image/png"),
+}
+
+
+def _serve_brand(path: str):
+    """Starlette response for a brand file, or None when not found."""
+    import mimetypes
+
+    from starlette.responses import FileResponse
+
+    entry = _BRAND_FILES.get(path)
+    if not entry:
+        return None
+    fp = os.path.join(_BRAND_DIR, entry[0])
+    if not os.path.exists(fp):
+        return None
+    mt = entry[1] or mimetypes.guess_type(fp)[0] or "application/octet-stream"
+    return FileResponse(fp, media_type=mt)
+
+
+def _wrap_with_brand(asgi_app):
+    """Layer favicon routes in front of the Flet ASGI app."""
+    try:
+        from fastapi import FastAPI as _FA
+        from starlette.requests import Request
+        from starlette.responses import Response
+    except Exception:
+        return asgi_app  # deps missing: fall back to plain Flet
+
+    fa = _FA()
+
+    @fa.get("/favicon.ico", include_in_schema=False)
+    async def _favicon_ico(request: Request):
+        resp = _serve_brand("/favicon.ico")
+        return resp or Response(status_code=404)
+
+    @fa.get("/favicon.svg", include_in_schema=False)
+    async def _favicon_svg(request: Request):
+        resp = _serve_brand("/favicon.svg")
+        return resp or Response(status_code=404)
+
+    @fa.get("/apple-touch-icon.png", include_in_schema=False)
+    async def _apple_icon(request: Request):
+        resp = _serve_brand("/apple-touch-icon.png")
+        return resp or Response(status_code=404)
+
+    @fa.get("/favicon-256.png", include_in_schema=False)
+    async def _favicon_png(request: Request):
+        resp = _serve_brand("/favicon-256.png")
+        return resp or Response(status_code=404)
+
+    fa.mount("/", asgi_app, name="flet")
+    return fa
+
+
 def section(title, color=ORANGE):
     return ft.Text(title, color=color, weight="bold", size=12)
 
@@ -629,6 +693,12 @@ def main(page: ft.Page):
     def refresh(msg_text=""):
         if msg_text:
             msg.value = msg_text
+        try:
+            preset_chip.content.value = (state.get("preset") or "preview_720p").replace("_", " ")
+            play_chip.content.value = "PLAYING" if state.get("playing") else "PAUSED"
+            play_chip.content.color = MINT if state.get("playing") else MUTED
+        except Exception:
+            pass
         # timeline tabs
         tabs = []
         for i, t in enumerate(ts.timelines):
@@ -967,9 +1037,21 @@ def main(page: ft.Page):
         if getattr(e, "ctrl", False) and not k.startswith("ctrl"):
             k = f"ctrl+{k}"
         act = keymap.action_for(k)
+        # don't hijack typing inside text fields (captions, paths, search)
+        try:
+            focused = getattr(page, "focused_control", None)
+        except Exception:
+            focused = None
+        typing_somewhere = isinstance(focused, ft.TextField)
         try:
             if k in ("space", " "):
-                toggle()
+                if not typing_somewhere:
+                    toggle()
+            elif act == "pause":
+                if state.get("playing"):
+                    toggle()
+            elif act == "save":
+                do_save()
             elif act == "trim_in":
                 trim(True)
             elif act == "trim_out":
@@ -996,7 +1078,8 @@ def main(page: ft.Page):
             elif act == "jump_fwd":
                 step(4)
             elif act == "delete" or k in ("delete", "backspace"):
-                delete_clip(state["sel"])
+                if not typing_somewhere:
+                    delete_clip(state["sel"])
             elif act == "undo":
                 undo()
             elif act == "redo":
@@ -1053,13 +1136,37 @@ def main(page: ft.Page):
                                  dense=True,
                                  on_submit=lambda e: set_caption_text(e.control.value or ""))
 
+    def _chip(label, color):
+        return ft.Container(content=ft.Text(label, size=10, weight="bold", color=color),
+                            bgcolor="#232136", border_radius=99,
+                            padding=ft.padding.symmetric(4, 10))
+
+    preset_chip = _chip("720p", VIOLET)
+    play_chip = _chip("PAUSED", MUTED)
+    ver_chip = _chip("v2.1", MINT)
+    _logo_b64 = ""
+    try:
+        with open(os.path.join(_BRAND_DIR, "favicon-256.png"), "rb") as _fh:
+            _logo_b64 = _b64.b64encode(_fh.read()).decode()
+    except Exception:
+        _logo_b64 = ""
+    logo = ft.Image(src_base64=_logo_b64, width=30, height=30,
+                    border_radius=8) if _logo_b64 else None
+
     header = ft.Container(
         content=ft.Row([
-            ft.Text("VIDMAKER2000", color=ORANGE, weight="bold", size=18),
-            ft.Text("multi-import · multi-timeline", color=MUTED, size=11),
+            *([logo] if logo else []),
+            ft.Row([
+                ft.Text("VID", color=ORANGE, weight="bold", size=18),
+                ft.Text("MAKER", color=VIOLET, weight="bold", size=18),
+                ft.Text("2000", color=INK, weight="bold", size=18),
+            ], spacing=0, tight=True),
+            ver_chip, preset_chip, play_chip,
             msg,
-        ], spacing=12),
-        bgcolor=PANEL, border_radius=12, padding=12)
+        ], spacing=12, wrap=True),
+        gradient=ft.LinearGradient(begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1),
+                                   colors=["#191827", "#221d38"]),
+        border_radius=12, padding=12)
 
     left = ft.Container(
         content=ft.Column([
@@ -1220,4 +1327,22 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    _run_flet(main, port=8550)
+    _port = int(os.environ.get("PORT", 8550))
+    if os.environ.get("VMDK_ASGI") == "1" or os.environ.get("PORT"):
+        # hosted mode (or opt-in): FastAPI front serves the favicon set and
+        # mounts the Flet app; falls back gracefully if deps are missing
+        try:
+            import uvicorn
+
+            flet_asgi = ft.run(main, view=ft.AppView.WEB_BROWSER,
+                               assets_dir=None,
+                               upload_dir=os.path.join(tempfile.gettempdir(),
+                                                       "vidmaker2000_uploads"),
+                               port=_port,
+                               export_asgi_app=True)
+            uvicorn.run(_wrap_with_brand(flet_asgi), host="0.0.0.0", port=_port,
+                        log_level="warning")
+        except Exception:
+            _run_flet(main, port=_port)  # graceful fallback
+    else:
+        _run_flet(main, port=_port)
