@@ -78,6 +78,9 @@ class Clip:
     # Ken Burns motion for stills: {"zs": 1.0, "ze": 1.15, "px": -0.1, "py": 0.05}
     # zoom start/end factors and pan as fractions of frame size
     kenburns: dict | None = None
+    # text styling for this clip's caption: {"pos","size","color","bg"}
+    # (None = the classic white-on-video look)
+    text_style: dict | None = None
 
     @property
     def trim_dur(self):

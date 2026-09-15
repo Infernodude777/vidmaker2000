@@ -3,7 +3,7 @@
 ![python](https://img.shields.io/badge/python-3.12%2B-3776ab)
 ![flet](https://img.shields.io/badge/UI-flet%201.0-ff8906)
 ![opencv](https://img.shields.io/badge/engine-OpenCV-5c3ee8)
-![tests](https://img.shields.io/badge/tests-17%20passing-2cb67d)
+![tests](https://img.shields.io/badge/tests-25%20passing-2cb67d)
 
 A browser video editor with a neon heart. Multi-timeline cutting, per-frame
 grading, LUTs, transitions, captions, scene detection, beat snapping and a
@@ -48,8 +48,15 @@ noir, vhs, warm, cool, punch, film, dream, retro, glitchy. Live RGB histogram
 and parade scopes plus an audio strip.
 
 **Transitions & captions** — crossfade, dip-to-black, wipe, slide and zoom
-dissolve render identically in preview and export; captions burn in
-(top/bottom) and export as SRT/VTT.
+dissolve render identically in preview and export; captions burn in with
+**CapCut-style presets** (minimal, subtitle box, title, neon, pop, brand —
+color, size, position and background box) and export as SRT/VTT.
+
+**Extras** — **GIF export** of the first 8 seconds (looping, grades and
+captions included), a **title-card generator** that builds opener images
+from a title + subtitle, a live **render-queue panel** with per-job state,
+and **background autosave** every 60s so a crash never costs more than a
+minute of edits.
 
 **Smart tools** — scene auto-split slices a clip at detected cuts; beat snap
 aligns the playhead to detected music beats; close-gaps / merge / ripple

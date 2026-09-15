@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.5 — CapCut-style polish
+
+- text styling engine: per-clip caption presets (minimal, subtitle box,
+  title, neon, pop, brand) with color, size, position and translucent
+  background box; rendered in preview and export
+- GIF export: looping 8-second GIF of the timeline with grades, transitions
+  and captions baked in (EXPORT GIF button)
+- title-card generator: type a title + subtitle, MAKE OPENER builds a branded
+  opener image and adds it to the timeline
+- live render-queue panel with per-job state icons, CLEAR DONE action
+- background autosave loop: crash-protection snapshot every 60s when the
+  project changed (separate from the manual-save snapshots)
+- richer bin rows (resolution + duration), clip badges for speed / fades /
+  motion, caption center position
+- tests grew to 25 (caption styles, GIF export, text-style persistence)
+
+# Changelog
+
 ## v2.4 — nested timelines, motion and speed
 
 - nested sequences: collapse an entire timeline into a single clip on another

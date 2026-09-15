@@ -27,7 +27,7 @@ from filters import apply_fade
 from timeline import Timeline, TimelineSet, Clip, Grade, Marker
 from video_processor import probe_media, grab_media_frame, grade_frame, frame_to_png_bytes
 from histogram import frame_histogram_strip, rgb_parade
-from captions import draw_caption
+from captions import draw_caption, TEXT_PRESETS
 
 # live UI palette — starts from utils' neon values, updated by the theme
 # picker so refresh() and dynamically-built controls never go stale
@@ -283,6 +283,24 @@ def main(page: ft.Page):
     markers_row = ft.Row(spacing=6, wrap=True)
     tabs_row = ft.Row(spacing=6, wrap=True)
     bin_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
+    queue_col = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO)
+
+    def _render_queue_panel():
+        """Compact render-queue status (shown in PROJECT section)."""
+        rows = []
+        for j in render_q.jobs[-5:]:
+            color = {"queued": MUTED, "running": ORANGE, "done": MINT,
+                     "failed": RED, "cancelled": MUTED}.get(j.state, MUTED)
+            icon = {"queued": "◌", "running": "◐", "done": "●", "failed": "✕",
+                    "cancelled": "⊘"}.get(j.state, "·")
+            rows.append(ft.Row([
+                ft.Text(icon, size=11, color=color),
+                ft.Text(f"{j.preset}", size=10, color=ui["soft_ink"], expand=True),
+                ft.Text(f"{j.frames}f" if j.state == "done" else j.state,
+                        size=10, color=color),
+            ], spacing=4, tight=True))
+        queue_col.controls = rows or [ft.Text("queue empty — E to export",
+                                              size=10, color=MUTED)]
     bin_search = ft.TextField(label="Search bin / indexed library", dense=True,
                               on_submit=lambda e: refresh())
     folder_field = ft.TextField(label="Folder to index for b-roll", dense=True,
@@ -524,6 +542,19 @@ def main(page: ft.Page):
         state["cap_pos"] = k
         refresh(f"caption: {k}")
 
+    def set_text_preset(name):
+        tl = cur()
+        if not tl.clips or not (0 <= state["sel"] < len(tl.clips)):
+            return "select a clip first"
+        c = tl.clips[state["sel"]]
+        if not getattr(c, "caption", ""):
+            return "type a caption first"
+        preset = dict(TEXT_PRESETS.get(name) or {})
+        if preset.get("pos"):
+            state["cap_pos"] = preset["pos"]
+        c.text_style = preset or None
+        return f"text style: {name}"
+
     def set_scope(m):
         scope_mode["m"] = m
         refresh()
@@ -714,6 +745,7 @@ def main(page: ft.Page):
             preset_chip.content.value = (state.get("preset") or "preview_720p").replace("_", " ")
             play_chip.content.value = "PLAYING" if state.get("playing") else "PAUSED"
             play_chip.content.color = MINT if state.get("playing") else MUTED
+            _render_queue_panel()
         except Exception:
             pass
         # timeline tabs
@@ -741,8 +773,12 @@ def main(page: ft.Page):
             rows.append(ft.Container(
                 content=ft.Row([
                     ft.Text(f"{tag}", size=10, color=VIOLET, weight="bold"),
-                    ft.Text(m.get("name", "")[:16], size=11, color=INK, expand=True),
-                    ft.Text(f"{float(m.get('duration', 0)):.1f}s", size=10, color=MUTED),
+                    ft.Column([
+                        ft.Text(m.get("name", "")[:16], size=11, color=INK),
+                        ft.Text(f"{float(m.get('duration', 0)):.1f}s · "
+                                f"{int(m.get('width', 0) or 0)}x{int(m.get('height', 0) or 0)}",
+                                size=9, color=MUTED),
+                    ], spacing=0, tight=True, expand=True),
                     ft.IconButton(Icons.ADD, icon_size=16, icon_color=MINT,
                                   tooltip="Add to timeline",
                                   on_click=lambda e, k=bi: bin_to_timeline(k)),
@@ -814,10 +850,20 @@ def main(page: ft.Page):
                 thumbs = []
             trans = getattr(c, "transition", "cut") or "cut"
             tag2 = "" if trans == "cut" else f" [{trans}]"
+            badges = ""
+            spd = float(getattr(c, "speed", 1.0) or 1.0)
+            if abs(spd - 1.0) > 1e-6:
+                badges += f" · {spd:g}x"
+            if float(getattr(c, "fade_in", 0) or 0) > 0:
+                badges += " · fade-in"
+            if float(getattr(c, "fade_out", 0) or 0) > 0:
+                badges += " · fade-out"
+            if getattr(c, "kenburns", None):
+                badges += " · motion"
             cards.append(ft.Container(
                 content=ft.Column([
                     ft.Text(f"{i+1} · {tag} · {c.name[:12]}", size=10, color="white", weight="bold"),
-                    ft.Text(f"{c.trim_dur:.1f}s{tag2}", size=10, color=ui["soft_ink"]),
+                    ft.Text(f"{c.trim_dur:.1f}s{tag2}{badges}", size=10, color=ui["soft_ink"]),
                     *([ft.Row([ft.Image(src=b, width=64, height=36, fit=Fit.CONTAIN)
                                for b in thumbs[:4]], spacing=2, tight=True)] if thumbs else []),
                     *([ft.Text(c.caption[:22], size=9, color=MINT)]
@@ -971,6 +1017,43 @@ def main(page: ft.Page):
         job = render_q.add(cur().name, state.get("preset") or "preview_720p", out)
         refresh(f"queued export {job.job_id} ({state.get('preset')})")
         _kick_render_worker()
+
+    def do_export_gif():
+        if not cur().clips:
+            return "nothing to export"
+        from export import export_gif
+        out = os.path.join(tempfile.gettempdir(), f"vidmaker2000_{safe_name(cur().name)}.gif")
+        r = export_gif(cur(), grade, out, fps=10.0, max_seconds=8.0)
+        return f"GIF -> {out}" if r.get("ok") else f"GIF failed: {r.get('error')}"
+
+    def make_title_card():
+        """Generate an opener image from the title field and add it to the bin."""
+        title = (title_field.value or "").strip()
+        if not title:
+            return "type a title first"
+        from captions import draw_title
+        img = _blank_card()
+        img = draw_title(img, title, subtitle_field.value or "")
+        p = os.path.join(tmp_upload, f"title_{state['import_seq'] + 1}.png")
+        state["import_seq"] += 1
+        cv2.imwrite(p, img)
+        info = sanitize_info(probe_media(p, image_duration=IMAGE_DEFAULT_DUR))
+        if not info:
+            return "title card failed"
+        tl = cur()
+        media_bin.append({"path": p, "name": os.path.basename(p)[:24],
+                          "kind": "image", "duration": info["duration"],
+                          "fps": info["fps"], "width": info["width"],
+                          "height": info["height"]})
+        _index_media(p, info, "title")
+        tl.add_clip(media_to_clip(p, info, order=len(tl.clips)))
+        return f"title card -> {tl.name}"
+
+    def _blank_card(w=1280, h=720):
+        import numpy as np
+        img = np.zeros((h, w, 3), np.uint8)
+        img[:] = (23, 14, 15)  # vidmaker neon BG
+        return img
 
     def toggle():
         state["playing"] = not state["playing"]
@@ -1207,7 +1290,8 @@ def main(page: ft.Page):
         graded = grade_frame(raw, grade, local, clip.trim_dur)
         cap = getattr(clip, "caption", "")
         if cap:
-            graded = draw_caption(graded, cap, pos=state.get("cap_pos", "bottom"))
+            graded = draw_caption(graded, cap, style=getattr(clip, "text_style", None)
+                                  or {"pos": state.get("cap_pos", "bottom")})
         fi = float(getattr(clip, "fade_in", 0) or 0)
         fo = float(getattr(clip, "fade_out", 0) or 0)
         if fi > 0 or fo > 0:
@@ -1272,6 +1356,28 @@ def main(page: ft.Page):
 
     state["alive"] = True
     threading.Thread(target=_playback_loop, daemon=True).start()
+
+    # ---- background autosave: crash protection every 60s when dirty ----
+    def _autosave_loop():
+        import time as _time
+        dirty_flag = {"last": ""}
+        while state.get("alive", True):
+            _time.sleep(60.0)
+            try:
+                tl = cur()
+                sig = (len(tl.clips), round(state["t"], 1),
+                       len(media_bin), ts.active)
+                if sig == dirty_flag["last"]:
+                    continue  # nothing changed since the last snapshot
+                dirty_flag["last"] = sig
+                autosave.snapshot(autosave_dir,
+                                  {"project": ts.to_dict(), "media_bin": media_bin},
+                                  tag="autosave")
+                autosave.rotate(autosave_dir, keep=5, tag="autosave")
+            except Exception:
+                continue
+
+    threading.Thread(target=_autosave_loop, daemon=True).start()
 
     # ---- keyboard shortcuts (page-level, web mode) ----
     def on_key(e):
@@ -1415,6 +1521,11 @@ def main(page: ft.Page):
     goto_field = ft.TextField(label="Go to (MM:SS / 90 / 1m30)", dense=True,
                               expand=True,
                               on_submit=lambda e: go_to_time())
+
+    title_field = ft.TextField(label="Title (opener card)", dense=True,
+                               hint_text="VIDMAKER2000")
+    subtitle_field = ft.TextField(label="Subtitle", dense=True,
+                                  hint_text="neon cuts, zero friction")
 
     def _chip(label, color):
         return ft.Container(content=ft.Text(label, size=10, weight="bold", color=color),
@@ -1603,6 +1714,21 @@ def main(page: ft.Page):
             ], tight=True),
             EButton("EXPORT MP4", bgcolor=MINT, color="black",
                     expand=True, on_click=lambda e: do_export()),
+            ft.Text("RENDER QUEUE", size=10, color=MUTED),
+            ft.Container(content=queue_col, bgcolor=ui["panel_edge"],
+                         border_radius=8, padding=6),
+            ft.Row([
+                ft.TextButton("EXPORT GIF", tooltip="Looping GIF of the first 8 seconds",
+                              on_click=lambda e: refresh(do_export_gif())),
+                ft.TextButton("CLEAR DONE", tooltip="Remove finished jobs from the queue",
+                              on_click=lambda e: (render_q.clear_finished(), refresh("queue cleared"))),
+            ], spacing=2, wrap=True, tight=True),
+            ft.Divider(height=1, color=ui["panel_edge"]),
+            section("TITLE CARD", color=MINT),
+            title_field,
+            subtitle_field,
+            EButton("MAKE OPENER", bgcolor=VIOLET, color="white", expand=True,
+                    on_click=lambda e: refresh(make_title_card())),
             ft.Divider(height=1, color=ui["panel_edge"]),
             section("SCOPE", color=VIOLET),
             ft.Container(content=hist_img, bgcolor="black", border_radius=8,
@@ -1684,7 +1810,11 @@ def main(page: ft.Page):
             caption_field,
             ft.Row([ft.TextButton(s, tooltip="caption position",
                                   on_click=lambda e, k=s: set_caption_style(k))
-                    for s in ("bottom", "top")], spacing=2, wrap=True),
+                    for s in ("bottom", "center", "top")], spacing=2, wrap=True),
+            ft.Text("TEXT STYLE (CapCut-style presets)", size=10, color=MUTED),
+            ft.Row([ft.TextButton(n, tooltip=f"apply the {n} text look",
+                                  on_click=lambda e, k=n: refresh(set_text_preset(k)))
+                    for n in TEXT_PRESETS], spacing=2, wrap=True),
         ], spacing=4, scroll=ft.ScrollMode.AUTO),
         width=280, bgcolor=PANEL, border_radius=12, padding=12)
 

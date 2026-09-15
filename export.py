@@ -177,6 +177,7 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
         trans = getattr(clip, "transition", "cut") or "cut"
         trans_dur = float(getattr(clip, "trans_dur", 0.5) or 0.5)
         caption = str(getattr(clip, "caption", "") or "")
+        caption_style = getattr(clip, "text_style", None)
         fade_in = float(getattr(clip, "fade_in", 0.0) or 0.0)
         fade_out = float(getattr(clip, "fade_out", 0.0) or 0.0)
         for fidx, frame in enumerate(_iter_source_frames(clip, fps)):
@@ -187,7 +188,8 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
             local = fidx / max(1, fps)
             g = render_frame(frame, grade, local, dur,
                              prev_frame=prev_last, trans=trans,
-                             trans_dur=trans_dur, caption=caption)
+                             trans_dur=trans_dur, caption=caption,
+                             caption_style=caption_style)
             if fade_in > 0 or fade_out > 0:
                 g = apply_fade(g, fade_in, fade_out, local, dur)
             prev_last = g.copy()
@@ -204,3 +206,51 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
                 progress_cb(done)
     out.release()
     return {"ok": True, "frames": done, "path": out_path, "muted": bool(grade.muted)}
+
+
+def export_gif(timeline, grade, out_path, fps=10.0, max_seconds=10.0,
+               width=320, progress_cb=None):
+    """Looping GIF of the timeline (grades/transitions/captions applied).
+
+    Capped at ``max_seconds`` of output so a long timeline cannot produce a
+    gigantic GIF by accident. Uses Pillow, which is already a dependency.
+    """
+    clips = [c for c in timeline.clips
+             if (getattr(c, "path", "") and os.path.exists(c.path))
+             or getattr(c, "kind", "") == "nested"]
+    if not clips:
+        return {"ok": False, "error": "no clips"}
+    budget = max(1, int(max_seconds * fps))
+    frames = []
+    prev_last = None
+    for clip in clips:
+        for fidx, frame in enumerate(_iter_source_frames(clip, fps)):
+            if len(frames) >= budget:
+                break
+            local = fidx / max(1.0, fps)
+            g = render_frame(frame, grade, local, float(getattr(clip, "trim_dur", 1) or 1),
+                             prev_frame=prev_last,
+                             trans=getattr(clip, "transition", "cut") or "cut",
+                             trans_dur=float(getattr(clip, "trans_dur", 0.5) or 0.5),
+                             caption=str(getattr(clip, "caption", "") or ""),
+                             caption_style=getattr(clip, "text_style", None))
+            prev_last = g.copy()
+            h, w0 = g.shape[:2]
+            if w0 != width:
+                nh = max(1, int(h * width / w0))
+                g = cv2.resize(g, (width, nh))
+            frames.append(cv2.cvtColor(g, cv2.COLOR_BGR2RGB))
+            if progress_cb and len(frames) % 20 == 0:
+                progress_cb(len(frames))
+        if len(frames) >= budget:
+            break
+    if not frames:
+        return {"ok": False, "error": "no frames rendered"}
+    try:
+        from PIL import Image
+        imgs = [Image.fromarray(f) for f in frames]
+        imgs[0].save(out_path, save_all=True, append_images=imgs[1:],
+                     duration=int(1000 / max(1.0, fps)), loop=0)
+    except Exception as ex:
+        return {"ok": False, "error": f"gif encode failed: {ex}"}
+    return {"ok": True, "frames": len(frames), "path": out_path}

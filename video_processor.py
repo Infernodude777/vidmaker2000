@@ -134,7 +134,8 @@ def grade_frame(frame_bgr, g, t_local=0.0, trim_dur=1.0):
 
 
 def render_frame(frame_bgr, g, t_local=0.0, trim_dur=1.0,
-                 prev_frame=None, trans="cut", trans_dur=0.5, caption=""):
+                 prev_frame=None, trans="cut", trans_dur=0.5, caption="",
+                 caption_style=None):
     graded = grade_frame(frame_bgr, g, t_local, trim_dur)
     if prev_frame is not None and trans and trans != "cut" and t_local < trans_dur:
         t = max(0.0, min(1.0, t_local / max(0.01, trans_dur)))
@@ -142,7 +143,7 @@ def render_frame(frame_bgr, g, t_local=0.0, trim_dur=1.0,
     if caption:
         try:
             from captions import draw_caption
-            graded = draw_caption(graded, caption, pos="bottom")
+            graded = draw_caption(graded, caption, style=caption_style)
         except Exception:
             pass
     return graded

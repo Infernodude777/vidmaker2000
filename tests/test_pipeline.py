@@ -259,3 +259,42 @@ def test_markers_nav_and_persistence():
     assert tl.marker_after(3.0) is None
     tl2 = Timeline.from_dict(tl.to_dict())
     assert len(tl2.markers) == 2 and tl2.markers[0].note == "a"
+
+
+# ---- v2.5: text styling, GIF export ----
+
+def test_caption_styles_change_pixels():
+    import numpy as np
+    import captions
+    f = np.zeros((240, 320, 3), np.uint8)
+    plain = captions.draw_caption(f.copy(), "hello")
+    styled = captions.draw_caption(f.copy(), "hello",
+                                   style={"pos": "top", "size": 1.2,
+                                          "color": "yellow", "bg": "black"})
+    assert not np.array_equal(plain, styled)
+    assert captions.TEXT_PRESETS and "subtitle" in captions.TEXT_PRESETS
+
+
+def test_gif_export_loops():
+    import export
+    from timeline import Timeline, Clip, Grade
+    import os, tempfile
+    p = os.path.join(tempfile.gettempdir(), "gif_t.png")
+    import numpy as np
+    import cv2
+    cv2.imwrite(p, np.zeros((48, 64, 3), np.uint8))
+    tl = Timeline()
+    tl.add_clip(Clip(path=p, kind="image", duration=1.0, fps=10.0,
+                     in_point=0.0, out_point=1.0))
+    out = os.path.join(tempfile.gettempdir(), "gif_t.gif")
+    r = export.export_gif(tl, Grade(), out, fps=5.0, max_seconds=1.0)
+    assert r.get("ok") and os.path.exists(out) and os.path.getsize(out) > 0
+
+
+def test_text_style_persists_on_clip():
+    from timeline import Clip
+    c = Clip(caption="x", text_style={"pos": "top", "size": 1.3,
+                                      "color": "mint", "bg": None})
+    d = c.to_dict()
+    c2 = Clip(**{k: v for k, v in d.items() if k in Clip.__dataclass_fields__})
+    assert c2.text_style["color"] == "mint"

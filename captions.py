@@ -48,7 +48,59 @@ def _anchor_y(frame, lines, pos: str, pad: int) -> int:
     return frame.shape[0] - pad - max(0, len(lines) - 1) * line_h
 
 
-def draw_caption(frame_bgr, text, pos="bottom", scale=0.9, thickness=2, pad=10):
+# ─── styled text (BGR tuples) ───────────────────────────────────────────────
+
+_NAMED_COLORS = {
+    "white": (255, 255, 255), "black": (0, 0, 0),
+    "yellow": (88, 238, 255), "cyan": (225, 208, 77),
+    "mint": (125, 182, 44), "orange": (6, 137, 255),
+    "violet": (240, 90, 127), "red": (82, 82, 255),
+}
+
+# one-click text looks (keys are the UI preset names)
+TEXT_PRESETS = {
+    "minimal": {"pos": "bottom", "size": 0.9, "color": "white", "bg": None},
+    "subtitle": {"pos": "bottom", "size": 0.8, "color": "white", "bg": "black"},
+    "title": {"pos": "center", "size": 1.4, "color": "white", "bg": None},
+    "neon": {"pos": "bottom", "size": 1.0, "color": "cyan", "bg": None},
+    "pop": {"pos": "top", "size": 1.0, "color": "yellow", "bg": "black"},
+    "brand": {"pos": "bottom", "size": 0.9, "color": "orange", "bg": None},
+}
+
+
+def _style_of(style):
+    """Normalize a style dict -> (pos, scale, bgr_color, bg_name|None)."""
+    s = style or {}
+    pos = s.get("pos", "bottom")
+    pos = pos if pos in _POSITIONS else "bottom"
+    scale = max(0.5, min(2.0, float(s.get("size", 0.9) or 0.9)))
+    color = _NAMED_COLORS.get(str(s.get("color", "white")).lower(), (255, 255, 255))
+    bg = s.get("bg")
+    bg = str(bg).lower() if bg else None
+    if bg not in _NAMED_COLORS and bg is not None:
+        bg = "black"
+    return pos, scale, color, bg
+
+
+def _draw_bg_box(frame, x0, y0, x1, y1, bgr):
+    """Soft translucent box behind text (alpha-blended slice)."""
+    try:
+        import cv2
+        import numpy as np
+        h, w = frame.shape[:2]
+        x0 = max(0, x0); y0 = max(0, y0); x1 = min(w, x1); y1 = min(h, y1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        slice_ = frame[y0:y1, x0:x1]
+        solid = np.empty_like(slice_)
+        solid[:] = bgr
+        frame[y0:y1, x0:x1] = cv2.addWeighted(slice_, 0.35, solid, 0.65, 0)
+    except Exception:
+        pass
+
+
+def draw_caption(frame_bgr, text, pos="bottom", scale=0.9, thickness=2, pad=10,
+                 style=None):
     """Draw ``text`` onto ``frame_bgr`` in place and return the frame.
 
     ``pos`` is one of "bottom" (default), "top" or "center". Long captions are
@@ -62,6 +114,10 @@ def draw_caption(frame_bgr, text, pos="bottom", scale=0.9, thickness=2, pad=10):
         import cv2
     except Exception:
         return frame_bgr
+    position, styled_scale, color, bg = _style_of(style)
+    if style:
+        pos = position
+        scale = styled_scale
     position = pos if pos in _POSITIONS else "bottom"
     width_chars = max(16, int(frame.shape[1] / max(8.0, 22.0 * scale)))
     lines = wrap_text(text, width_chars)
@@ -73,9 +129,12 @@ def draw_caption(frame_bgr, text, pos="bottom", scale=0.9, thickness=2, pad=10):
         for line in lines:
             (tw, th), _base = cv2.getTextSize(line, font, scale, thickness)
             x = max(pad, (frame.shape[1] - tw) // 2)
+            if bg is not None:
+                _draw_bg_box(frame, x - 8, y - th - 6, x + tw + 8, y + 8,
+                             _NAMED_COLORS[bg])
             cv2.putText(frame, line, (x, y), font, scale, (0, 0, 0),
                         thickness + 3, cv2.LINE_AA)
-            cv2.putText(frame, line, (x, y), font, scale, (255, 255, 255),
+            cv2.putText(frame, line, (x, y), font, scale, color,
                         thickness, cv2.LINE_AA)
             y += th + max(6, thickness * 3)
     except Exception:
