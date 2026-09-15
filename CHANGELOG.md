@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.3 — markers, fades and craft tools
+
+- timeline markers: colored flags with notes, B to drop, Up/Down to jump,
+  click to seek; stored in projects and autosave
+- per-clip fade-in/fade-out from black, rendered in preview AND export
+  (cycled with [ and ], 0.25s-3s)
+- frame-accurate stepping (, / .) and go-to timecode (G) accepting 90,
+  1m30 or MM:SS; time display toggles TC <-> seconds
+- snapshot (P): saves the current graded frame as a PNG
+- playback rate cycling 0.25x-2x (Shift+J / Shift+L)
+- duplicate-to-new-timeline copies clips + markers to a fresh tab
+- theme picker wired to themes.py with persistence; new daylight (light)
+  palette; live recolor of header and panels
+- keyboard map grew to 28 conflict-checked bindings; docs updated
+
+# Changelog
+
 ## v2.2 — polish, branding and hosting
 
 - favicon set rendered from a new gradient play-mark: `favicon.svg`,

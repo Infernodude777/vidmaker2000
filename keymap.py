@@ -27,6 +27,15 @@ DEFAULTS = {
     "redo": "ctrl+y",
     "zoom_in": "+",
     "zoom_out": "-",
+    "marker": "b",
+    "marker_prev": "up",
+    "marker_next": "down",
+    "frame_back": ",",
+    "frame_fwd": ".",
+    "goto": "g",
+    "snapshot": "p",
+    "fade_in": "[",
+    "fade_out": "]",
 }
 
 _KEYMAP = dict(DEFAULTS)

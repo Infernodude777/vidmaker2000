@@ -22,7 +22,15 @@ THEMES = {
         "bg": "#1a1014", "panel": "#251821", "ink": "#fff4e8", "muted": "#c3a08f",
         "accent": "#ff7043", "secondary": "#ffb300", "good": "#66bb6a", "warn": "#e53935",
     },
+    "daylight": {
+        "bg": "#f2f2f7", "panel": "#ffffff", "ink": "#1a1a2e", "muted": "#5c5c70",
+        "accent": "#d97b00", "secondary": "#6c4de0", "good": "#1f9d61", "warn": "#c0392b",
+    },
 }
+
+# themes whose ``panel`` is brighter than their ``bg`` (used to pick the
+# light-mode icon in the UI)
+LIGHT_THEMES = {"daylight"}
 
 _ACTIVE = "neon"
 

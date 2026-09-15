@@ -33,10 +33,11 @@ python app.py            # → http://localhost:8550
 **Import** — mp4/mov/webm/avi + png/jpg/webp/bmp, up to 200MB. Browser
 uploads are spilled to disk and probed automatically; big files can be added
 by local path. A one-click **sample generator** produces test media so the
-whole pipeline works with zero assets.
+whole pipeline works with zero assets.**Timelines** — unlimited timeline tabs, duplicate/delete, **duplicate-to-new-tab**, 60-level undo, zoomable clip cards with filmstrip thumbnails, transitions and caption tags.
 
-**Timelines** — unlimited timeline tabs, duplicate/delete, 60-level undo,
-zoomable clip cards with filmstrip thumbnails, transitions and caption tags.
+**Markers** — colored flags with notes, pinned per timeline and saved with the project. Drop with `B`, jump with `↑`/`↓`, click a flag to seek. **Go-to timecode** accepts `90`, `1m30` or `MM:SS`; time display toggles between TC and raw seconds.
+
+**Fades** — per-clip fade-in/out from black (0.25s–3s), rendered identically in preview and export. **Frame stepping** with `,`/`.` gives single-frame accuracy; **snapshot** (`P`) saves the current graded frame as a PNG; playback rate cycles 0.25×–2×.
 
 **Grade & FX** — exposure, brightness, contrast, saturation, temperature,
 tint, vignette, blur, sharpen, pixelate, glitch, grain, chromatic aberration,
@@ -63,6 +64,8 @@ background thread with aspect-aware centre-cropping — the UI never blocks.
 **Persistence** — atomic project saves plus rotating autosave snapshots with
 microsecond stamps (rapid consecutive saves never overwrite each other).
 
+**Themes** — neon (default), midnight, sunset and a true light **daylight** palette, switchable in-app and persisted to `~/.vidmaker2000/theme.json`.
+
 ## Keyboard
 
 Full map lives in `keymap.py` — every binding is remappable at runtime via
@@ -72,8 +75,11 @@ Full map lives in `keymap.py` — every binding is remappable at runtime via
 |-----|--------|-----|--------|
 | `Space` | Play / pause | `J` / `L` | Shuttle ±2s |
 | `K` | Pause | `←` / `→` | Step ±0.5s |
-| `I` / `O` | Trim in / out | `S` | Split at playhead |
-| `D` | Duplicate clip | `Del` | Remove clip |
+| `,` / `.` | Frame step | `I` / `O` | Trim in / out |
+| `S` | Split at playhead | `D` | Duplicate clip |
+| `B` | Drop marker | `↑` / `↓` | Prev / next marker |
+| `[` / `]` | Cycle fade in / out | `Del` | Remove clip |
+| `G` | Go-to timecode | `P` | Snapshot frame PNG |
 | `E` | Queue export | `Ctrl+S` | Save |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo | `M` | Mute |
 | `R` | Reset grade | `+` / `-` | Zoom timeline |

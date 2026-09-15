@@ -11,29 +11,37 @@ sheet that matches the running code.
 | --- | --- |
 | `space` | Play / pause the preview |
 | `k` | Pause |
-| `left` | Step back half a second |
-| `right` | Step forward half a second |
-| `j` | Jump back two seconds |
-| `l` | Jump forward two seconds |
+| `left` / `right` | Step back / forward half a second |
+| `j` / `l` | Jump back / forward two seconds |
+| `,` / `.` | Step one frame back / forward |
+| `shift+j` / `shift+l` | Slower / faster playback (0.25x – 2x) |
 
 ## Editing
 
 | Key | Action |
 | --- | --- |
-| `i` | Trim in the clip under the playhead |
-| `o` | Trim out the clip under the playhead |
+| `i` / `o` | Trim in / out the clip under the playhead |
 | `s` | Split at the playhead |
 | `d` | Duplicate the selected clip |
 | `delete` / `backspace` | Remove the selected clip |
-| `ctrl+z` | Undo |
-| `ctrl+y` | Redo |
+| `[` / `]` | Cycle fade-in / fade-out on the selected clip |
+| `ctrl+z` / `ctrl+y` | Undo / redo |
 | `ctrl+s` | Save the project (writes an autosave snapshot too) |
+
+## Markers
+
+| Key | Action |
+| --- | --- |
+| `b` | Drop a marker at the playhead |
+| `up` / `down` | Jump to the previous / next marker |
 
 ## Project and grade
 
 | Key | Action |
 | --- | --- |
 | `e` | Queue an export of the current timeline |
+| `g` | Focus the go-to-timecode field (accepts `90`, `1m30`, `MM:SS`) |
+| `p` | Save the current frame as a PNG |
 | `m` | Toggle mute |
 | `r` | Reset the grade |
 | `+` / `-` | Zoom the timeline in / out |
@@ -45,4 +53,4 @@ sheet that matches the running code.
 * `keymap.remap("split", "b")` rebinds at runtime, and `keymap.reset()`
   restores the defaults.
 * While typing in a text field the handler ignores plain letter keys, so
-  captions and path inputs behave normally.
+  captions, paths and search behave normally.

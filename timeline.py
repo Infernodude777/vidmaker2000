@@ -59,6 +59,8 @@ class Clip:
     track: str = "V1"
     transition: str = "cut"
     trans_dur: float = 0.5
+    fade_in: float = 0.0    # per-clip fade-from-black (seconds)
+    fade_out: float = 0.0   # per-clip fade-to-black (seconds)
     caption: str = ""
     duration: float = 0.0
     fps: float = 30.0
@@ -77,11 +79,36 @@ class Clip:
         return asdict(self)
 
 
+class Marker:
+    """A colored flag pinned to a timeline position, with an optional note."""
+
+    COLORS = {"orange": "#ff8906", "violet": "#7f5af0", "mint": "#2cb67d",
+              "red": "#d04648", "blue": "#4da3ff"}
+
+    def __init__(self, t: float, color: str = "orange", note: str = ""):
+        self.t = max(0.0, float(t))
+        self.color = color if color in self.COLORS else "orange"
+        self.note = str(note or "")
+
+    def to_dict(self):
+        return {"t": self.t, "color": self.color, "note": self.note}
+
+    @staticmethod
+    def from_dict(d):
+        try:
+            return Marker(float((d or {}).get("t", 0.0)),
+                          str((d or {}).get("color", "orange")),
+                          str((d or {}).get("note", "")))
+        except (TypeError, ValueError):
+            return None
+
+
 class Timeline:
     def __init__(self, name="Timeline 1"):
         self.name: str = name or "Timeline 1"
         self.clips: list[Clip] = []
         self.playhead: float = 0.0
+        self.markers: list[Marker] = []
 
     def add_clip(self, clip: Clip):
         clip.order = len(self.clips)
@@ -130,6 +157,28 @@ class Timeline:
     def total_duration(self):
         return sum(c.trim_dur for c in self.clips)
 
+    # ---- markers ------------------------------------------------------------
+    def add_marker(self, t, color="orange", note="") -> Marker:
+        m = Marker(t, color, note)
+        self.markers.append(m)
+        self.markers.sort(key=lambda mk: mk.t)
+        return m
+
+    def remove_marker(self, t, tol=0.15) -> bool:
+        for i, m in enumerate(self.markers):
+            if abs(m.t - float(t)) <= tol:
+                self.markers.pop(i)
+                return True
+        return False
+
+    def marker_before(self, t):
+        prev = [m for m in self.markers if m.t < float(t) - 1e-6]
+        return prev[-1] if prev else None
+
+    def marker_after(self, t):
+        nxt = [m for m in self.markers if m.t > float(t) + 1e-6]
+        return nxt[0] if nxt else None
+
     def locate(self, t: float):
         acc = 0.0
         for c in self.clips:
@@ -148,12 +197,18 @@ class Timeline:
             c.order = i
 
     def to_dict(self):
-        return {"name": self.name, "playhead": self.playhead, "clips": [c.to_dict() for c in self.clips]}
+        return {"name": self.name, "playhead": self.playhead,
+                "markers": [m.to_dict() for m in self.markers],
+                "clips": [c.to_dict() for c in self.clips]}
 
     @staticmethod
     def from_dict(d):
         tl = Timeline(name=(d or {}).get("name", "Timeline 1"))
         tl.playhead = float((d or {}).get("playhead", 0.0))
+        for md in (d or {}).get("markers", []) or []:
+            m = Marker.from_dict(md)
+            if m:
+                tl.markers.append(m)
         for cd in (d or {}).get("clips", []):
             tl.add_clip(Clip(**{k: v for k, v in cd.items() if k in Clip.__dataclass_fields__}))
         return tl

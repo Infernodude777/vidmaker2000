@@ -1,6 +1,7 @@
 import cv2
 import os
 from video_processor import grade_frame, render_frame
+from filters import apply_fade
 from profiles import PROFILES as _PROFILES, crop_box
 
 
@@ -109,6 +110,8 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
         trans = getattr(clip, "transition", "cut") or "cut"
         trans_dur = float(getattr(clip, "trans_dur", 0.5) or 0.5)
         caption = str(getattr(clip, "caption", "") or "")
+        fade_in = float(getattr(clip, "fade_in", 0.0) or 0.0)
+        fade_out = float(getattr(clip, "fade_out", 0.0) or 0.0)
         for fidx, frame in enumerate(_iter_source_frames(clip, fps)):
             if done >= max_frames:
                 break
@@ -118,6 +121,8 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
             g = render_frame(frame, grade, local, dur,
                              prev_frame=prev_last, trans=trans,
                              trans_dur=trans_dur, caption=caption)
+            if fade_in > 0 or fade_out > 0:
+                g = apply_fade(g, fade_in, fade_out, local, dur)
             prev_last = g.copy()
             if preset and (g.shape[1], g.shape[0]) != (w, h):
                 # aspect-aware: centre-crop to the profile aspect instead of squashing

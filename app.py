@@ -3,6 +3,7 @@ import os
 import threading
 import logging
 import copy
+import cv2
 
 
 def _probe_cached(path, **kw):
@@ -15,6 +16,7 @@ def _probe_cached(path, **kw):
 import video_processor
 import tempfile
 from transitions import list_names as list_transition_names, apply_transition
+import themes as themes_mod
 from themes import set_theme, get_theme as get_theme_colors, list_themes
 from effects_rack import list_looks, apply_look
 from timeline_view import clip_card
@@ -25,8 +27,9 @@ from export import export_timeline, list_presets, get_preset
 from project_store import (save_project, load_project_full, default_save_path,
                           autosave_path, save_autosave, load_autosave,
                           validate_media_bin, project_stats)
-from utils import BG, PANEL, INK, MUTED, ORANGE, VIOLET, MINT, RED, sec_to_tc, safe_name
-from timeline import Timeline, TimelineSet, Clip, Grade
+from utils import BG, PANEL, INK, MUTED, ORANGE, VIOLET, MINT, RED, sec_to_tc, safe_name, tc_to_sec
+from filters import apply_fade
+from timeline import Timeline, TimelineSet, Clip, Grade, Marker
 from video_processor import probe_media, grab_media_frame, grade_frame, frame_to_png_bytes
 from histogram import frame_histogram_strip, rgb_parade
 from captions import draw_caption
@@ -238,12 +241,24 @@ def main(page: ft.Page):
     ts = TimelineSet()
     grade = Grade()
     media_bin: list[dict] = []
-    state = {"playing": False, "t": 0.0, "sel": 0, "importing": False, "import_seq": 0}
+    state = {"playing": False, "t": 0.0, "sel": 0, "importing": False, "import_seq": 0,
+             "tc_mode": "tc"}
     state["zoom"] = 1.0
     state["cap_pos"] = "bottom"
     state["preset"] = "preview_720p"
     tmp_upload = os.path.join(tempfile.gettempdir(), "vidmaker2000_uploads")
     os.makedirs(tmp_upload, exist_ok=True)
+
+    # restore the saved theme before any control is built
+    state["light"] = False
+    try:
+        themes_mod.load(themes_mod.default_path())
+    except Exception:
+        pass
+    try:
+        page.bgcolor = get_theme_colors()["bg"]
+    except Exception:
+        pass
 
     # ---- v2 services: media library index, render queue, autosave, proxies ----
     media_idx = media_index.MediaIndex()
@@ -264,6 +279,7 @@ def main(page: ft.Page):
                          color=MUTED, size=12)
     msg = ft.Text("", color=MINT, size=11)
     clip_row = ft.Row(spacing=8, scroll=ft.ScrollMode.AUTO)
+    markers_row = ft.Row(spacing=6, wrap=True)
     tabs_row = ft.Row(spacing=6, wrap=True)
     bin_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
     bin_search = ft.TextField(label="Search bin / indexed library", dense=True,
@@ -784,7 +800,7 @@ def main(page: ft.Page):
         aw = render_audio_strip(grade.muted, getattr(grade, "speed", 1.0), width=240)
         if aw:
             wave_img.src = aw
-        tc.value = f"{tl.name} · {sec_to_tc(state['t'], clip.fps)} / {sec_to_tc(total, clip.fps)} · {clip.name}"
+        tc.value = f"{tl.name} · {_fmt_t(state['t'], clip.fps)} / {_fmt_t(total, clip.fps)} · {clip.name}"
         zoom = state.get("zoom", 1.0)
         cards = []
         for i, c in enumerate(tl.clips):
@@ -806,6 +822,10 @@ def main(page: ft.Page):
                                for b in thumbs[:4]], spacing=2, tight=True)] if thumbs else []),
                     *([ft.Text(c.caption[:22], size=9, color=MINT)]
                       if getattr(c, "caption", "") else []),
+                    *([ft.Text("⤒ fade in", size=9, color=ORANGE)]
+                      if float(getattr(c, "fade_in", 0) or 0) > 0 else []),
+                    *([ft.Text("⤓ fade out", size=9, color=ORANGE)]
+                      if float(getattr(c, "fade_out", 0) or 0) > 0 else []),
                     ft.Row([
                         ft.IconButton(Icons.CHEVRON_LEFT, icon_size=14, icon_color="#cfc9e8",
                                       tooltip="Move left",
@@ -822,6 +842,23 @@ def main(page: ft.Page):
                 border_radius=10, padding=8,
                 on_click=lambda e, k=i: select_clip(k)))
         clip_row.controls = cards
+        # markers row (click a flag to jump, ✕ removes it)
+        mrow = []
+        for m in tl.markers:
+            mc = Marker.COLORS.get(m.color, ORANGE)
+            mrow.append(ft.Container(
+                content=ft.Row([
+                    ft.IconButton(Icons.PLACE, icon_size=14, icon_color=mc,
+                                  tooltip=f"jump to {m.t:.2f}s" + (f" · {m.note}" if m.note else ""),
+                                  on_click=lambda e, mk=m: go_to_time(mk.t)),
+                    *([ft.Text(m.note[:14], size=9, color=INK)] if m.note else []),
+                    ft.IconButton(Icons.CLOSE, icon_size=12, icon_color=MUTED,
+                                  tooltip="remove marker",
+                                  on_click=lambda e, mk=m: (tl.remove_marker(mk.t), refresh("marker removed"))),
+                ], spacing=0, tight=True),
+                bgcolor="#232136", border_radius=99, padding=ft.padding.only(left=2, right=4)))
+        markers_row.controls = mrow or [ft.Text("no markers — press M to drop one",
+                                                size=10, color=MUTED)]
         try:
             scrub.value = (state["t"] / total * 100.0) if total > 0 else 0
         except Exception:
@@ -954,6 +991,135 @@ def main(page: ft.Page):
             state["sel"] = c.order
         refresh()
 
+    # ---- v2.3 features: markers, frame-step, goto, snapshot, fades ----
+    def _fmt_t(sec, fps=30.0):
+        """Timecode or raw seconds depending on the display mode."""
+        if state.get("tc_mode", "tc") == "sec":
+            return f"{max(0.0, float(sec)):.2f}s"
+        return sec_to_tc(sec, fps)
+
+    def go_to_time(t=None):
+        """Jump the playhead to ``t`` (or parse the goto field)."""
+        if t is None:
+            raw = (goto_field.value or "").strip()
+            t = tc_to_sec(raw) if ":" in raw else _parse_loose_time(raw)
+            if t <= 0 and raw:
+                return f"could not parse time: {raw}"
+        total = cur().total_duration()
+        state["t"] = max(0.0, min(t, total)) if total > 0 else 0.0
+        c, _ = cur().locate(state["t"])
+        if c is not None:
+            state["sel"] = c.order
+        refresh("playhead -> " + _fmt_t(state["t"]))
+        return state["t"]
+
+    def _parse_loose_time(raw):
+        """'90', '1m30', '2:05' -> seconds (best effort)."""
+        try:
+            raw = (raw or "").strip().lower().replace("s", "")
+            if "m" in raw:
+                m, s = raw.split("m", 1)
+                return float(m or 0) * 60.0 + float(s or 0)
+            return float(raw or 0)
+        except ValueError:
+            return 0.0
+
+    def drop_marker(color="orange"):
+        tl = cur()
+        m = tl.add_marker(state["t"], color=color)
+        refresh(f"marker at {_fmt_t(m.t)}")
+
+    def jump_marker(dir=1):
+        tl = cur()
+        m = tl.marker_after(state["t"]) if dir > 0 else tl.marker_before(state["t"])
+        if m is None:
+            return "no marker in that direction"
+        state["t"] = m.t
+        c, _ = tl.locate(state["t"])
+        if c is not None:
+            state["sel"] = c.order
+        refresh("marker: " + (m.note or _fmt_t(m.t)))
+
+    def frame_step(dir=1):
+        tl = cur()
+        clip, local = tl.locate(state["t"])
+        fps = float(getattr(clip, "fps", 30.0) or 30.0) if clip else 30.0
+        state["t"] = max(0.0, state["t"] + dir / fps)
+        c, _ = tl.locate(state["t"])
+        if c is not None:
+            state["sel"] = c.order
+        refresh()
+
+    def snapshot_png():
+        tl = cur()
+        clip, local = tl.locate(state["t"])
+        if clip is None:
+            return "nothing under the playhead"
+        raw, _ = grab_media_frame(clip.path, getattr(clip, "kind", "video"),
+                                  clip.in_point + local)
+        if raw is None:
+            return "frame unreadable"
+        graded = grade_frame(raw, grade, local, clip.trim_dur)
+        cap = getattr(clip, "caption", "")
+        if cap:
+            graded = draw_caption(graded, cap, pos=state.get("cap_pos", "bottom"))
+        fi = float(getattr(clip, "fade_in", 0) or 0)
+        fo = float(getattr(clip, "fade_out", 0) or 0)
+        if fi > 0 or fo > 0:
+            graded = apply_fade(graded, fi, fo, local, clip.trim_dur)
+        out = os.path.join(tempfile.gettempdir(),
+                           f"vidmaker2000_frame_{safe_name(tl.name)}_{int(state['t']*1000)}.png")
+        ok, buf = cv2.imencode(".png", graded)
+        if not ok:
+            return "encode failed"
+        with open(out, "wb") as fh:
+            fh.write(buf.tobytes())
+        return f"frame saved -> {out}"
+
+    def set_fade(which, val):
+        tl = cur()
+        if not tl.clips or not (0 <= state["sel"] < len(tl.clips)):
+            return "select a clip first"
+        c = tl.clips[state["sel"]]
+        setattr(c, which, max(0.0, min(3.0, float(val))))
+        refresh(f"{which} = {getattr(c, which):.2f}s")
+
+    _FADE_STEPS = (0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0)
+
+    def _cycle_fade(which):
+        """Rotate the selected clip's fade through preset lengths."""
+        tl = cur()
+        if not tl.clips or not (0 <= state["sel"] < len(tl.clips)):
+            return None
+        c = tl.clips[state["sel"]]
+        vals = _FADE_STEPS
+        i = min(range(len(vals)), key=lambda k: abs(vals[k] - float(getattr(c, which, 0.0) or 0.0)))
+        nv = vals[(i + 1) % len(vals)]
+        setattr(c, which, nv)
+        return nv
+
+    def _cycle_fade_msg(which):
+        v = _cycle_fade(which)
+        return "select a clip first" if v is None else f"{which} = {v:.2f}s"
+
+    def dup_to_new_timeline():
+        src = cur()
+        if not src.clips:
+            return "nothing to copy"
+        dst = ts.add_timeline(f"{src.name[:20]} copy")
+        dst.clips = copy.deepcopy(src.clips)
+        dst.markers = copy.deepcopy(src.markers)
+        for i, c in enumerate(dst.clips):
+            c.order = i
+        ts.active = len(ts.timelines) - 1
+        refresh(f"copied to {dst.name}")
+
+    def cycle_speed(dir=1):
+        steps = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+        cur_idx = min(range(len(steps)), key=lambda i: abs(steps[i] - float(getattr(grade, "speed", 1.0) or 1.0)))
+        grade.speed = steps[max(0, min(len(steps) - 1, cur_idx + dir))]
+        refresh(f"speed {grade.speed:g}x")
+
     # ---- undo / redo / duplicate / zoom ----
     def undo():
         ts.undo()
@@ -992,10 +1158,14 @@ def main(page: ft.Page):
         cap = getattr(clip, "caption", "")
         if cap:
             graded = draw_caption(graded, cap, pos=state.get("cap_pos", "bottom"))
+        fi = float(getattr(clip, "fade_in", 0) or 0)
+        fo = float(getattr(clip, "fade_out", 0) or 0)
+        if fi > 0 or fo > 0:
+            graded = apply_fade(graded, fi, fo, local, clip.trim_dur)
         png = frame_to_png_bytes(graded)
         if png:
             preview.src = png
-        tc.value = f"{tl.name} · {sec_to_tc(state['t'], clip.fps)} / {sec_to_tc(total, clip.fps)} · {clip.name}"
+        tc.value = f"{tl.name} · {_fmt_t(state['t'], clip.fps)} / {_fmt_t(total, clip.fps)} · {clip.name}"
         try:
             scrub.value = (state["t"] / total * 100.0) if total > 0 else 0
         except Exception:
@@ -1088,6 +1258,36 @@ def main(page: ft.Page):
                 set_zoom(0.2)
             elif act == "zoom_out":
                 set_zoom(-0.2)
+            elif act == "marker":
+                if not typing_somewhere:
+                    drop_marker()
+            elif act == "marker_prev":
+                jump_marker(-1)
+            elif act == "marker_next":
+                jump_marker(1)
+            elif act == "frame_back":
+                frame_step(-1)
+            elif act == "frame_fwd":
+                frame_step(1)
+            elif act == "goto":
+                try:
+                    goto_field.focus()
+                except Exception:
+                    pass
+            elif act == "snapshot":
+                refresh(snapshot_png())
+            elif act == "fade_in":
+                c = _cycle_fade("fade_in")
+                if c is not None:
+                    refresh(f"fade_in = {c:.2f}s")
+            elif act == "fade_out":
+                c = _cycle_fade("fade_out")
+                if c is not None:
+                    refresh(f"fade_out = {c:.2f}s")
+            elif k == "shift+j":
+                cycle_speed(-1)
+            elif k == "shift+l":
+                cycle_speed(1)
         except Exception:
             pass
 
@@ -1136,6 +1336,10 @@ def main(page: ft.Page):
                                  dense=True,
                                  on_submit=lambda e: set_caption_text(e.control.value or ""))
 
+    goto_field = ft.TextField(label="Go to (MM:SS / 90 / 1m30)", dense=True,
+                              expand=True,
+                              on_submit=lambda e: go_to_time())
+
     def _chip(label, color):
         return ft.Container(content=ft.Text(label, size=10, weight="bold", color=color),
                             bgcolor="#232136", border_radius=99,
@@ -1168,8 +1372,52 @@ def main(page: ft.Page):
                                    colors=["#191827", "#221d38"]),
         border_radius=12, padding=12)
 
+    # ---- theme picker (persisted via themes.py, live recolor) ----
+    theme_row = ft.Row(spacing=4, wrap=True)
+
+    def _apply_theme_colors(pal):
+        """Recolor the shared chrome that uses module-level constants."""
+        try:
+            page.bgcolor = pal["bg"]
+        except Exception:
+            pass
+        for c in (header, left, right):
+            try:
+                c.bgcolor = pal["panel"]
+            except Exception:
+                pass
+        try:
+            header.content.controls[1].controls[0].color = pal["accent"]
+            header.content.controls[1].controls[1].color = pal["secondary"]
+            header.content.controls[1].controls[2].color = pal["ink"]
+            ver_chip.content.color = pal["good"]
+        except Exception:
+            pass
+        try:
+            section.__defaults__ = (pal["accent"],)
+        except Exception:
+            pass
+
+    def on_theme(name):
+        pal = set_theme(name)
+        state["light"] = name in themes_mod.LIGHT_THEMES
+        _apply_theme_colors(pal)
+        try:
+            themes_mod.save(themes_mod.default_path())
+        except Exception:
+            pass
+        refresh(f"theme: {name}")
+
+    for name in list_themes():
+        theme_row.controls.append(ft.TextButton(
+            name, tooltip=f"switch to the {name} theme",
+            on_click=lambda e, k=name: on_theme(k)))
+
     left = ft.Container(
         content=ft.Column([
+            section("THEME"),
+            theme_row,
+            ft.Divider(height=1, color="#2a2740"),
             section("MEDIA BIN"),
             EButton("IMPORT MEDIA", bgcolor=ORANGE, color="black",
                     expand=True, action=pick_all),
@@ -1228,6 +1476,20 @@ def main(page: ft.Page):
                 ft.TextButton("BEAT SNAP", tooltip="Snap playhead to music beats (.wav in uploads)",
                               on_click=lambda e: refresh(beat_snap_action())),
             ], spacing=2, wrap=True, tight=True),
+            ft.Row([
+                ft.TextButton("MARKER", tooltip="Drop marker at playhead (B)",
+                              on_click=lambda e: drop_marker()),
+                ft.TextButton("SNAPSHOT", tooltip="Save current frame as PNG (P)",
+                              on_click=lambda e: refresh(snapshot_png())),
+                ft.TextButton("DUP → NEW TL", tooltip="Copy this timeline to a new tab",
+                              on_click=lambda e: dup_to_new_timeline()),
+            ], spacing=2, wrap=True, tight=True),
+            ft.Row([
+                ft.TextButton("FADE IN ＋", tooltip="Cycle fade-in on selected clip ([)",
+                              on_click=lambda e, w="fade_in": refresh(_cycle_fade_msg(w))),
+                ft.TextButton("FADE OUT ＋", tooltip="Cycle fade-out on selected clip (])",
+                              on_click=lambda e, w="fade_out": refresh(_cycle_fade_msg(w))),
+            ], spacing=2, wrap=True, tight=True),
             ft.Divider(height=1, color="#2a2740"),
             section("PROJECT"),
             ft.Text("PRESET", size=11, color=MUTED),
@@ -1256,14 +1518,20 @@ def main(page: ft.Page):
         width=300, bgcolor=PANEL, border_radius=12, padding=12)
 
     transport = ft.Row([
-        ft.IconButton(Icons.PLAY_ARROW, icon_color=MINT, tooltip="Play/pause",
+        ft.IconButton(Icons.PLAY_ARROW, icon_color=MINT, tooltip="Play/pause (space)",
                       on_click=lambda e: toggle()),
         ft.IconButton(Icons.SKIP_PREVIOUS, icon_color=INK, tooltip="-0.5s",
                       on_click=lambda e: step(-1)),
         ft.IconButton(Icons.SKIP_NEXT, icon_color=INK, tooltip="+0.5s",
                       on_click=lambda e: step(1)),
         tc,
+        ft.IconButton(Icons.FLIP, icon_color=VIOLET, tooltip="Timecode / seconds",
+                      on_click=lambda e: _toggle_tc_mode()),
     ], spacing=4)
+
+    def _toggle_tc_mode():
+        state["tc_mode"] = "sec" if state.get("tc_mode", "tc") == "tc" else "tc"
+        refresh("time display: " + state["tc_mode"])
 
     center = ft.Column([
         ft.Container(content=transport, bgcolor=PANEL, border_radius=12, padding=10),
@@ -1271,9 +1539,13 @@ def main(page: ft.Page):
                      expand=True, padding=8, alignment=ft.Alignment.CENTER),
         empty_hint,
         ft.Container(
-            content=ft.Column([scrub, tabs_row, clip_row], spacing=8,
+            content=ft.Column([scrub, tabs_row, clip_row, markers_row], spacing=8,
                               scroll=ft.ScrollMode.AUTO),
-            bgcolor=PANEL, border_radius=12, padding=10, height=220),
+            bgcolor=PANEL, border_radius=12, padding=10, height=250),
+        ft.Container(content=ft.Row([goto_field,
+                                     EButton("GO", on_click=lambda e: go_to_time())],
+                                    spacing=6, tight=True),
+                     bgcolor=PANEL, border_radius=12, padding=8),
     ], expand=True, spacing=10)
 
     right = ft.Container(
