@@ -3,7 +3,7 @@
 ![python](https://img.shields.io/badge/python-3.12%2B-3776ab)
 ![flet](https://img.shields.io/badge/UI-flet%201.0-ff8906)
 ![opencv](https://img.shields.io/badge/engine-OpenCV-5c3ee8)
-![tests](https://img.shields.io/badge/tests-25%20passing-2cb67d)
+![tests](https://img.shields.io/badge/tests-30%20passing-2cb67d)
 
 A browser video editor with a neon heart. Multi-timeline cutting, per-frame
 grading, LUTs, transitions, captions, scene detection, beat snapping and a
@@ -33,9 +33,11 @@ python app.py            # → http://localhost:8550
 **Import** — mp4/mov/webm/avi + png/jpg/webp/bmp, up to 200MB. Browser
 uploads are spilled to disk and probed automatically; big files can be added
 by local path. A one-click **sample generator** produces test media so the
-whole pipeline works with zero assets.**Timelines** — unlimited timeline tabs, duplicate/delete, **duplicate-to-new-tab**, **nested sequences** (collapse a whole timeline into a single clip on another tab — grades, transitions and fades compose through it), 60-level undo, zoomable clip cards with filmstrip thumbnails, transitions and caption tags.
-
-**Clip motion & speed** — per-clip playback rate (0.5×–4×) and **Ken Burns** pan/zoom presets for stills (zoom in/out, pan left/right), rendered identically in preview and export. Grade copy/paste (`Ctrl+C`/`Ctrl+V`) transfers a whole look between clips.
+whole pipeline works with zero assets.**Timelines** — unlimited timeline tabs, duplicate/delete, **duplicate-to-new-tab**, **nested sequences** (collapse a whole timeline into a single clip on another tab — grades, transitions and fades compose through it), 60-level undo, zoomable clip cards with filmstrip thumbnails, transitions and caption tags.**Clip motion & speed** — per-clip playback rate (0.5×–4×, speed-aware
+timeline occupancy like CapCut: 2× halves the clip's screen time) and
+**Ken Burns** pan/zoom presets for stills (zoom in/out, pan left/right),
+rendered identically in preview and export. Grade copy/paste
+(`Ctrl+C`/`Ctrl+V`) transfers a whole look between clips.
 
 **Markers** — colored flags with notes, pinned per timeline and saved with the project. Drop with `B`, jump with `↑`/`↓`, click a flag to seek. **Go-to timecode** accepts `90`, `1m30` or `MM:SS`; time display toggles between TC and raw seconds.
 
@@ -66,9 +68,12 @@ delete keep the timeline tight; timeline stats in one click.
 tags). The bin search falls back to library hits so removed files come back
 with one click. Index any local folder as a b-roll pool.
 
-**Delivery** — preview_720p, full_1080p, square, vertical, youtube_1080p,
-youtube_4k, cinema_24, shorts. Exports are queued and rendered in a
-background thread with aspect-aware centre-cropping — the UI never blocks.
+**Delivery** — 12 categorized presets across **General / Social / YouTube /
+Film**: 720p, 1080p, 4K, square, vertical (TikTok, Reels, Shorts, Stories),
+60fps variants, 24fps cinematic and DCI 4K. A **custom preset builder**
+(W × H × fps × quality) with three fit modes — **contain** (letterbox),
+**cover** (centre-crop) and **stretch**. Exports are queued and rendered in
+a background thread — the UI never blocks.
 
 **Persistence** — atomic project saves plus rotating autosave snapshots with
 microsecond stamps (rapid consecutive saves never overwrite each other).

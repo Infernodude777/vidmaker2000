@@ -84,8 +84,10 @@ class Clip:
 
     @property
     def trim_dur(self):
+        """Occupancy on the timeline: source length adjusted by clip speed."""
         out = self.out_point if self.out_point > 0 else self.duration
-        return max(0.1, out - self.in_point)
+        spd = max(0.25, min(4.0, float(self.speed or 1.0)))
+        return max(0.1, (out - self.in_point) / spd)
 
     def nested_timeline(self):
         """Materialized sub-Timeline for nested clips (None otherwise)."""

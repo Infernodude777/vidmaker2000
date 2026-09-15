@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.6 — variable export system
+
+- 12 categorized export presets: General (720p/1080p/4K), Social (square,
+  vertical, TikTok, Reels, Shorts 60fps), YouTube (1080p60, 4K), Film
+  (24fps cinema, DCI 4K) - each with quality, fit and platform metadata
+- custom preset builder in the UI: W x H x fps x quality with collision-safe
+  naming, appears instantly in a categorized preset column with tooltips
+- three fit modes: contain (letterbox), cover (centre-crop), stretch
+- true slow motion: per-clip speed < 1x now holds source frames instead of
+  silently falling back to 1x; speed correctly changes timeline occupancy
+  (2x clip = half screen time, CapCut-style) in preview AND export
+- export result now reports width/height/fps/preset
+- presets carry quality hints to the video writer where supported
+- tests grew to 30 (preset categories, custom builder, exact output
+  geometry per preset, letterbox pixels, slow-mo output duration)
+
+# Changelog
+
 ## v2.5 — CapCut-style polish
 
 - text styling engine: per-clip caption presets (minimal, subtitle box,

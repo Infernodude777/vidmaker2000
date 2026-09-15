@@ -298,3 +298,79 @@ def test_text_style_persists_on_clip():
     d = c.to_dict()
     c2 = Clip(**{k: v for k, v in d.items() if k in Clip.__dataclass_fields__})
     assert c2.text_style["color"] == "mint"
+
+
+# ---- v2.6: variable export presets, fit modes, speed-aware timeline ----
+
+def _tiny_video(path, frames=60, size=(64, 48), fps=30.0):
+    import cv2
+    import numpy as np
+    w = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+    for k in range(frames):
+        fr = np.zeros((size[1], size[0], 3), np.uint8)
+        fr[:] = (k * 4 % 255, 90, 60)
+        w.write(fr)
+    w.release()
+    return path
+
+
+def test_preset_categories_and_info():
+    import export
+    cats = export.preset_categories()
+    assert "Social" in cats and "YouTube" in cats and "General" in cats
+    assert "shorts_1080p60" in cats["Social"]
+    info = export.preset_info("shorts_1080p60")
+    assert "1080" in info and "60" in info
+
+
+def test_custom_preset_builder():
+    import export
+    key = export.add_custom_preset("My Reel!!", 1080, 1350, fps=25,
+                                   quality=90, fit="contain")
+    p = export.get_preset(key)
+    assert p["width"] == 1080 and p["height"] == 1350 and p["fps"] == 25.0
+    assert p["fit"] == "contain" and p["category"] == "Custom"
+    key2 = export.add_custom_preset("My Reel!!", 500, 500)
+    assert key2 != key  # collision-safe naming
+
+
+def test_fit_modes_produce_exact_geometry():
+    import export
+    from timeline import Clip, Grade, Timeline
+    import cv2, os, tempfile
+    vp = _tiny_video(os.path.join(tempfile.gettempdir(), "fit_t.mp4"))
+    tl = Timeline()
+    tl.add_clip(Clip(path=vp, kind="video", duration=1.0, fps=30.0,
+                     in_point=0.0, out_point=1.0))
+    for preset, expect in (("square_1080", (1080, 1080)),
+                           ("preview_720p", (1280, 720))):
+        out = os.path.join(tempfile.gettempdir(), f"fit_{preset}.mp4")
+        r = export.export_timeline(tl, Grade(), out, preset=preset, max_frames=10)
+        assert r["ok"] and (r["width"], r["height"]) == expect, (preset, r)
+        cap = cv2.VideoCapture(out)
+        ok, frame = cap.read()
+        cap.release()
+        assert ok and frame.shape[1] == expect[0] and frame.shape[0] == expect[1]
+
+
+def test_contain_fit_letterboxes():
+    import export
+    import numpy as np
+    frame = np.zeros((240, 320, 3), np.uint8)
+    out = export._fit_frame(frame, 100, 100, "contain")
+    assert out.shape[:2] == (100, 100)
+    assert out[0, 50].tolist() == [0, 0, 0]      # black bar on top
+    assert out[50, 50].sum() >= 0                 # centre is content
+
+
+def test_slowmo_doubles_output_duration():
+    import export
+    from timeline import Clip, Grade, Timeline
+    import os, tempfile
+    vp = _tiny_video(os.path.join(tempfile.gettempdir(), "smo.mp4"))
+    tl = Timeline()
+    tl.add_clip(Clip(path=vp, kind="video", duration=2.0, fps=30.0,
+                     in_point=0.0, out_point=2.0, speed=0.5))
+    out = os.path.join(tempfile.gettempdir(), "smo_out.mp4")
+    r = export.export_timeline(tl, Grade(), out, max_frames=200)
+    assert r["ok"] and abs(r["frames"] / 30.0 - 4.0) < 0.2  # 2s @0.5x = 4s

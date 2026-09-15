@@ -2,14 +2,49 @@ import cv2
 import os
 from video_processor import render_frame
 from filters import apply_fade
-from profiles import PROFILES as _PROFILES, crop_box
+from profiles import PROFILES as _PROFILES
 
 
+# preset fields: width, height, fps, codec, quality (mp4v 0-100),
+# fit ("contain" letterbox | "cover" centre-crop | "stretch"),
+# category (UI grouping), platform (UI tag)
 EXPORT_PRESETS = {
-    "preview_720p": {"width": 1280, "height": 720, "fps": 30.0, "codec": "mp4v"},
-    "full_1080p": {"width": 1920, "height": 1080, "fps": 30.0, "codec": "mp4v"},
-    "square_1080": {"width": 1080, "height": 1080, "fps": 30.0, "codec": "mp4v"},
-    "vertical_1080x1920": {"width": 1080, "height": 1920, "fps": 30.0, "codec": "mp4v"},
+    "preview_720p": {"width": 1280, "height": 720, "fps": 30.0, "codec": "mp4v",
+                     "quality": 70, "fit": "cover", "category": "General",
+                     "platform": "Editor preview"},
+    "full_1080p": {"width": 1920, "height": 1080, "fps": 30.0, "codec": "mp4v",
+                   "quality": 85, "fit": "cover", "category": "General",
+                   "platform": "Master"},
+    "full_4k": {"width": 3840, "height": 2160, "fps": 30.0, "codec": "mp4v",
+                "quality": 90, "fit": "cover", "category": "General",
+                "platform": "4K master"},
+    "square_1080": {"width": 1080, "height": 1080, "fps": 30.0, "codec": "mp4v",
+                    "quality": 80, "fit": "cover", "category": "Social",
+                    "platform": "Instagram feed"},
+    "vertical_1080x1920": {"width": 1080, "height": 1920, "fps": 30.0, "codec": "mp4v",
+                           "quality": 80, "fit": "cover", "category": "Social",
+                           "platform": "Stories / Reels / TikTok"},
+    "tiktok_1080p30": {"width": 1080, "height": 1920, "fps": 30.0, "codec": "mp4v",
+                       "quality": 85, "fit": "cover", "category": "Social",
+                       "platform": "TikTok"},
+    "reels_1080p30": {"width": 1080, "height": 1920, "fps": 30.0, "codec": "mp4v",
+                      "quality": 85, "fit": "cover", "category": "Social",
+                      "platform": "Instagram Reels"},
+    "shorts_1080p60": {"width": 1080, "height": 1920, "fps": 60.0, "codec": "mp4v",
+                       "quality": 85, "fit": "cover", "category": "Social",
+                       "platform": "YouTube Shorts (60fps)"},
+    "youtube_1080p60": {"width": 1920, "height": 1080, "fps": 60.0, "codec": "mp4v",
+                        "quality": 90, "fit": "cover", "category": "YouTube",
+                        "platform": "1080p60"},
+    "youtube_4k": {"width": 3840, "height": 2160, "fps": 30.0, "codec": "mp4v",
+                   "quality": 95, "fit": "cover", "category": "YouTube",
+                   "platform": "2160p"},
+    "cinema_24": {"width": 1920, "height": 1080, "fps": 24.0, "codec": "mp4v",
+                  "quality": 85, "fit": "cover", "category": "Film",
+                  "platform": "24fps cinematic"},
+    "cinema_4k_dc": {"width": 4096, "height": 2160, "fps": 24.0, "codec": "mp4v",
+                     "quality": 95, "fit": "cover", "category": "Film",
+                     "platform": "DCI 4K"},
 }
 
 
@@ -21,11 +56,76 @@ for _pname, _prof in _PROFILES.items():
 
 
 def get_preset(name="preview_720p"):
-    return EXPORT_PRESETS.get(name, EXPORT_PRESETS["preview_720p"])
+    return dict(EXPORT_PRESETS.get(name, EXPORT_PRESETS["preview_720p"]))
 
 
 def list_presets():
     return sorted(EXPORT_PRESETS.keys())
+
+
+def preset_categories():
+    """Category -> [preset names] for grouped UI menus."""
+    out: dict[str, list[str]] = {}
+    for name, p in EXPORT_PRESETS.items():
+        out.setdefault(p.get("category", "General"), []).append(name)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def preset_info(name):
+    """One-line human summary used in UI tooltips."""
+    p = get_preset(name)
+    return (f"{p['width']}x{p['height']} @ {p['fps']:g}fps · q{p.get('quality', 80)} · "
+            f"{p.get('fit', 'cover')} · {p.get('platform', '')}")
+
+
+def add_custom_preset(name, width, height, fps=30.0, quality=80, fit="cover"):
+    """Register a session custom preset (not persisted)."""
+    key = safe_preset_name(name)
+    EXPORT_PRESETS[key] = {"width": max(16, int(width)), "height": max(16, int(height)),
+                           "fps": max(1.0, min(120.0, float(fps))),
+                           "codec": "mp4v", "quality": max(10, min(100, int(quality))),
+                           "fit": fit if fit in ("contain", "cover", "stretch") else "cover",
+                           "category": "Custom", "platform": "Custom"}
+    return key
+
+
+def safe_preset_name(name):
+    keep = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in (name or "custom"))
+    base = (keep.strip("_") or "custom").lower()
+    key, n = base, 2
+    while key in EXPORT_PRESETS:
+        key = f"{base}_{n}"
+        n += 1
+    return key
+
+
+def target_geometry(src_w, src_h, preset, grade=None):
+    """Output (w, h, fps) honouring rotation and even-dimension rules."""
+    w = int(preset["width"]); h = int(preset["height"])
+    fps = float(preset.get("fps", 30.0))
+    if grade is not None and getattr(grade, "rotate", 0) in (90, 270):
+        w, h = h, w
+    return max(2, w - w % 2), max(2, h - h % 2), fps
+
+
+def _fit_frame(frame, tw, th, mode):
+    """Resize ``frame`` to (tw, th) using contain/cover/stretch semantics."""
+    h, w = frame.shape[:2]
+    if w == tw and h == th:
+        return frame
+    if mode == "stretch":
+        return cv2.resize(frame, (tw, th))
+    scale = min(tw / w, th / h) if mode == "contain" else max(tw / w, th / h)
+    nw, nh = max(2, int(w * scale)) // 2 * 2, max(2, int(h * scale)) // 2 * 2
+    resized = cv2.resize(frame, (nw, nh))
+    if mode == "cover":
+        x0 = max(0, (nw - tw) // 2); y0 = max(0, (nh - th) // 2)
+        return resized[y0:y0 + th, x0:x0 + tw]
+    # contain: letterbox onto black
+    canvas = __import__("numpy").zeros((th, tw, 3), dtype=frame.dtype)
+    x0 = (tw - nw) // 2; y0 = (th - nh) // 2
+    canvas[y0:y0 + nh, x0:x0 + nw] = resized
+    return canvas
 
 
 def _ken_burns(frame, kb, t01):
@@ -60,6 +160,7 @@ def _iter_source_frames(clip, fps, depth=0):
         dur = float(getattr(clip, "duration", 0) or 0)
     spd = max(0.25, min(4.0, float(getattr(clip, "speed", 1.0) or 1.0)))
     kb = getattr(clip, "kenburns", None)
+    # dur (trim_dur) already encodes speed — occupancy on the timeline
     n_out = max(1, int(dur * fps))
     if kind == "nested":
         # a nested clip plays its sub-timeline; in_point/out_point trim it.
@@ -99,23 +200,53 @@ def _iter_source_frames(clip, fps, depth=0):
     cfps = float(getattr(clip, "fps", 0) or fps) or fps
     start = int(clip.in_point * cfps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start)
-    step = max(1, int(round(spd)))          # per-clip speed: skip source frames
+    # per-clip speed: source position advances ``spd``x per output frame.
+    # spd > 1 skips source frames; spd < 1 holds frames for smooth slow-mo.
+    src_per_out = spd * cfps / max(1.0, fps)
     last_frame = None
-    i = 0
-    while i < n_out:
+    src_pos = 0.0
+    for _ in range(n_out):
+        target = int(src_pos)
         ok, frame = cap.read()
+        while ok and cap.get(cv2.CAP_PROP_POS_FRAMES) - 1 < target:
+            ok, frame = cap.read()
         if not ok:
             if last_frame is not None:
                 yield last_frame
-            i += 1
+            src_pos += src_per_out
             continue
-        if (i // max(1, int(round(1.0)))) % 1 == 0 and i % step == 0:
-            last_frame = frame
-            yield frame
-        elif last_frame is not None:
-            yield last_frame
-        i += 1
+        last_frame = frame
+        yield frame
+        src_pos += src_per_out
     cap.release()
+
+
+def _source_geometry(clips):
+    """First usable source geometry (w, h, fps), looking inside nested clips."""
+    for c in clips:
+        kind = getattr(c, "kind", "video") or "video"
+        if kind == "nested":
+            sub = getattr(c, "nested_timeline", lambda: None)()
+            if sub is not None and getattr(sub, "clips", None):
+                got = _source_geometry(sub.clips)
+                if got[0] > 0:
+                    return got
+            continue
+        if kind == "image":
+            still = cv2.imread(c.path, cv2.IMREAD_COLOR)
+            if still is not None:
+                h, w = still.shape[:2]
+                return w, h, float(getattr(c, "fps", 0) or 30.0) or 30.0
+        else:
+            cap0 = cv2.VideoCapture(c.path)
+            if cap0.isOpened():
+                w = int(cap0.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+                h = int(cap0.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                fps = float(cap0.get(cv2.CAP_PROP_FPS) or 30.0)
+                cap0.release()
+                if w > 0 and h > 0:
+                    return w, h, fps or 30.0
+    return 0, 0, 30.0
 
 
 def export_timeline(timeline, grade, out_path, progress_cb=None,
@@ -125,42 +256,25 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
              or getattr(c, "kind", "") == "nested"]
     if not clips:
         return {"ok": False, "error": "no clips"}
-    w = h = 0
-    fps = 30.0
-    for c in clips:
-        kind = getattr(c, "kind", "video") or "video"
-        if kind == "nested":
-            # placeholder frame size; nested geometry comes from the sub-clip
-            w = w or 1280
-            h = h or 720
-            if w > 0 and h > 0 and len(clips) == 1:
-                break
-            continue
-        if kind == "image":
-            still = cv2.imread(c.path, cv2.IMREAD_COLOR)
-            if still is not None:
-                h, w = still.shape[:2]
-                fps = float(getattr(c, "fps", 0) or 30.0)
-                break
-        else:
-            cap0 = cv2.VideoCapture(c.path)
-            if cap0.isOpened():
-                w = int(cap0.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-                h = int(cap0.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-                fps = float(cap0.get(cv2.CAP_PROP_FPS) or 30.0)
-                cap0.release()
-                if w > 0 and h > 0:
-                    break
-    if w <= 0 or h <= 0:
+    sw, sh, sfps = _source_geometry(clips)
+    if sw <= 0 or sh <= 0:
         return {"ok": False, "error": "unreadable media"}
     if preset:
         p = get_preset(preset)
-        w, h = int(p["width"]), int(p["height"])
-        fps = float(p.get("fps", 30.0))
-    if getattr(grade, "rotate", 0) in (90, 270):
-        w, h = h, w
+        w, h, fps = target_geometry(sw, sh, p, grade)
+        fit = p.get("fit", "cover")
+        quality = int(p.get("quality", 80))
+    else:
+        w, h = sw - sw % 2, sh - sh % 2
+        fps = sfps or 30.0
+        fit, quality = "cover", 80
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+    try:
+        # best-effort quality hint (honoured by backends that support it)
+        out.set(cv2.VIDEOWRITER_PROP_QUALITY, quality)
+    except Exception:
+        pass
     if not out.isOpened():
         return {"ok": False, "error": "writer failed"}
     done = 0
@@ -170,7 +284,6 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
             break
         if cancel_flag and cancel_flag():
             break
-        kind = getattr(clip, "kind", "video") or "video"
         dur = float(getattr(clip, "trim_dur", 0) or 0)
         if dur <= 0:
             dur = float(getattr(clip, "duration", 0) or 0)
@@ -193,19 +306,18 @@ def export_timeline(timeline, grade, out_path, progress_cb=None,
             if fade_in > 0 or fade_out > 0:
                 g = apply_fade(g, fade_in, fade_out, local, dur)
             prev_last = g.copy()
-            if preset and (g.shape[1], g.shape[0]) != (w, h):
-                # aspect-aware: centre-crop to the profile aspect instead of squashing
-                x0, y0, x1, y1 = crop_box(g.shape[1], g.shape[0], preset)
-                if (x0, y0, x1, y1) != (0, 0, g.shape[1], g.shape[0]):
-                    g = g[y0:y1, x0:x1]
             if (g.shape[1], g.shape[0]) != (w, h):
-                g = cv2.resize(g, (w, h))
+                g = _fit_frame(g, w, h, fit)
             out.write(g)
             done += 1
             if progress_cb and done % 30 == 0:
                 progress_cb(done)
     out.release()
-    return {"ok": True, "frames": done, "path": out_path, "muted": bool(grade.muted)}
+    info = {"ok": True, "frames": done, "path": out_path,
+            "muted": bool(grade.muted), "width": w, "height": h, "fps": fps}
+    if preset:
+        info["preset"] = preset
+    return info
 
 
 def export_gif(timeline, grade, out_path, fps=10.0, max_seconds=10.0,

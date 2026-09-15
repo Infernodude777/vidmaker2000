@@ -20,7 +20,7 @@ from themes import set_theme, get_theme as get_theme_colors, list_themes
 from effects_rack import list_looks, apply_look
 from audio_wave import render_audio_strip
 from thumbnails import cached_filmstrip
-from export import list_presets
+from export import preset_categories, preset_info, add_custom_preset
 from project_store import save_project, load_project_full, default_save_path
 from utils import BG, PANEL, INK, MUTED, ORANGE, VIOLET, MINT, RED, sec_to_tc, safe_name, tc_to_sec
 from filters import apply_fade
@@ -1279,8 +1279,9 @@ def main(page: ft.Page):
             if sc is None:
                 return None, local
             return _resolve_preview(sc, s_local, depth + 1)
-        raw, _ = grab_media_frame(clip.path, kind,
-                                  float(getattr(clip, "in_point", 0.0) or 0.0) + local)
+        spd = max(0.25, min(4.0, float(getattr(clip, "speed", 1.0) or 1.0)))
+        src_t = float(getattr(clip, "in_point", 0.0) or 0.0) + local * spd
+        raw, _ = grab_media_frame(clip.path, kind, src_t)
         return raw, local
 
     def _finish_preview(clip, raw, local):
@@ -1562,6 +1563,45 @@ def main(page: ft.Page):
     # ---- theme picker (persisted via themes.py, live recolor) ----
     theme_row = ft.Row(spacing=4, wrap=True)
 
+    # ---- export presets: categorized column + custom builder ----
+    presets_col = ft.Column(spacing=2)
+    cw_field = ft.TextField(label="W", dense=True, width=64)
+    ch_field = ft.TextField(label="H", dense=True, width=64)
+    cfps_field = ft.TextField(label="fps", dense=True, width=56)
+    cq_field = ft.TextField(label="q", dense=True, width=48)
+    custom_fit = {"m": "cover"}
+
+    def _custom_fit(mode):
+        custom_fit["m"] = mode
+        refresh("custom fit: " + mode)
+
+    def _make_custom_preset():
+        try:
+            w = int(float(cw_field.value or 0)); h = int(float(ch_field.value or 0))
+            fps = float(cfps_field.value or 30); q = int(float(cq_field.value or 80))
+        except ValueError:
+            return "preset fields must be numbers"
+        if w < 16 or h < 16:
+            return "enter width and height (min 16)"
+        key = add_custom_preset(f"custom_{w}x{h}", w, h, fps=fps,
+                                quality=q, fit=custom_fit["m"])
+        state["preset"] = key
+        _rebuild_presets_col()
+        return f"custom preset {key} active"
+
+    def _rebuild_presets_col():
+        rows = []
+        for cat, names in preset_categories().items():
+            rows.append(ft.Text(f"{cat}  ({len(names)})", size=10,
+                                color=VIOLET, weight="bold"))
+            rows.append(ft.Row(
+                [ft.TextButton(n, tooltip=preset_info(n),
+                               on_click=lambda e, k=n: set_preset(k))
+                 for n in names], spacing=2, wrap=True))
+        presets_col.controls = rows
+
+    _rebuild_presets_col()
+
     def _apply_theme_colors(pal):
         # keep the live palette in sync so everything built after this
         # (bin rows, cards, chips) picks up the theme automatically
@@ -1705,9 +1745,20 @@ def main(page: ft.Page):
             ft.Divider(height=1, color=ui["panel_edge"]),
             section("PROJECT"),
             ft.Text("PRESET", size=11, color=MUTED),
-            ft.Row([ft.TextButton(p, tooltip="export preset",
-                                  on_click=lambda e, k=p: set_preset(k))
-                    for p in list_presets()], spacing=2, wrap=True),
+            presets_col,
+            ft.Row([
+                cw_field, ch_field, cfps_field, cq_field,
+            ], spacing=4, tight=True),
+            ft.Row([
+                ft.TextButton("contain", tooltip="letterbox fit (black bars)",
+                              on_click=lambda e: _custom_fit("contain")),
+                ft.TextButton("cover", tooltip="centre-crop fit",
+                              on_click=lambda e: _custom_fit("cover")),
+                ft.TextButton("stretch", tooltip="stretch to fill",
+                              on_click=lambda e: _custom_fit("stretch")),
+                EButton("CUSTOM", tooltip="Build a custom preset from the fields",
+                        on_click=lambda e: refresh(_make_custom_preset())),
+            ], spacing=2, tight=True),
             ft.Row([
                 EButton("SAVE", expand=True, on_click=lambda e: do_save()),
                 EButton("LOAD", expand=True, action=pick_proj),
